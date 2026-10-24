@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "Snap-a-Store",
+    "slug": "snap-a-store",
+    "scheme": "snapastore",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#f8f7f1"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.snapastore.mobile",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Photograph your items to create editable store listings.",
+        "NSPhotoLibraryUsageDescription": "Choose a photo of the things you want to sell."
+      }
+    },
+    "android": {
+      "package": "com.snapastore.mobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#193d33"
+      },
+      "permissions": ["CAMERA"]
+    },
+    "web": { "bundler": "metro", "favicon": "./assets/icon.png" },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Choose a photo to create your storefront.",
+          "cameraPermission": "Photograph the things you want to sell.",
+          "microphonePermission": false
+        }
+      ],
+      "expo-secure-store"
+    ]
+  }
+}

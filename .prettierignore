@@ -1,0 +1,9 @@
+node_modules
+.next
+mobile/node_modules
+mobile/dist
+mobile/.expo
+data
+artifacts
+package-lock.json
+mobile/package-lock.json

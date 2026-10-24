@@ -1,0 +1,46 @@
+services:
+  app:
+    build: .
+    image: snap-a-store:local
+    env_file: .env.local
+    environment:
+      DATABASE_PATH: /app/data/snap-live.sqlite
+      TRUST_PROXY: "1"
+    volumes:
+      - store-data:/app/data
+    expose:
+      - "3000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  maintenance:
+    image: snap-a-store:local
+    env_file: .env.local
+    environment:
+      MAINTENANCE_BASE_URL: http://app:3000
+    command: ["node", "scripts/maintenance.mjs", "--watch"]
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+  gateway:
+    image: caddy:2-alpine
+    environment:
+      STORE_DOMAIN: ${STORE_DOMAIN:?Set STORE_DOMAIN to your public hostname}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+    restart: unless-stopped
+volumes:
+  store-data:
+  caddy-data:
+  caddy-config:

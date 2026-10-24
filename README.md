@@ -1,20 +1,60 @@
-# snap_a_store
+# Snap-a-Store
 
-Cal Hacks 13.0 project. Snap a photo of items on a table, Claude names and prices them,
-each item becomes a Visa Pay by Link checkout shown as a QR code, and Visa's webhook
-marks it sold.
+An Expo seller app for iOS and Android, with a public storefront and Square checkout. Photograph your items, review Claude's proposed names and prices, publish your catalog, and share a storefront QR code. Inventory is reserved before checkout and sold only after a verified Square payment.
 
-## Get started
+**No sample catalog, simulated payment endpoint, or fallback recognition exists in the app.** Missing service credentials produce an explicit setup error. Existing sample stores are retired; a new database (`data/snap-live.sqlite`) keeps earlier data separate without deleting it.
+
+## Start here
+
+Follow **[Service setup and deployment](docs/SERVICE-SETUP.md)**. You need your own Anthropic and Square accounts, a public HTTPS backend for live checkout, and a seller login. Optional Apify, Cartesia, and Convex integrations have complete setup instructions there.
+
 ```bash
-npm install
-cp .env.example .env.local   # fill in your keys
-npm run typecheck
+nvm use 22
+npm ci
+# .env.local is already present on this Mac. Fill its service credentials.
+npm run setup:seller
+npm run check:config
+npm run check:services
+npm run dev
 ```
 
-## Building with agents
-- Project rules for every agent: `CLAUDE.md`
-- One brief per agent: `docs/agents/`
-- Prompts to paste into each agent's session: `docs/STARTER-PROMPTS.md`
-- Lead checklist and merge order: `docs/LEAD-SETUP.md`
+In a second terminal:
 
-Launch an agent locally with `claude --worktree <agent-name>`, then `npm install` inside it.
+```bash
+cd mobile
+nvm use 22
+npm ci
+npm start
+```
+
+The local mobile API URL is `http://172.20.1.172:3000`. Sign in with the seller email/password you created. Local HTTP can be used to develop and scan photos; **production checkout requires a public HTTPS backend**. Set both `PUBLIC_BASE_URL` and `EXPO_PUBLIC_API_URL` to that deployed origin before selling. Restart the backend and Expo after changing environment variables.
+
+## Operating scope
+
+This deployment serves **one Square merchant, one location, USD prices, and local pickup**. The same seller can sign in on multiple devices. Multi-merchant Square OAuth, shipping, and app-based refunds are not implemented. Manage refunds/disputes in Square; refunded stock is not automatically relisted. Dedicated inventory sold through this app is authoritative in SQLite; don't sell the same reserved stock through a separate channel. Apify and Cartesia are optional; durable inventory does not require Convex.
+
+Run one backend replica on persistent local storage. The supplied production Compose configuration adds HTTPS through Caddy and a maintenance worker that reconciles payments and cancels expired checkouts only after Square confirms they are unpaid. Do not deploy this SQLite service on an ephemeral/serverless filesystem.
+
+## Security and payment behavior
+
+- Seller passwords are scrypt hashes; opaque sessions are hashed, expire after 30 days, and are revoked when the configured password changes. Web sessions use HttpOnly cookies; native sessions use SecureStore. No public merchant signup endpoint exists.
+- A checkout key survives retries. The browser supports HTTP environments without `crypto.randomUUID()` using secure random bytes or server-issued UUIDs; it never falls back to `Math.random()`.
+- Square catalog publication and payment-link creation use stable idempotency keys. Stock reservations survive process restarts and uncertain network failures.
+- A signed webhook or authenticated Square payment lookup verifies order, location, currency, amount, and completion. Browser redirects cannot mark orders paid.
+- Payment links are single use. After 30 minutes, the worker attempts cancellation; it retains stock whenever Square's result is uncertain. Monitor maintenance failures and reconcile in Square before intervening.
+- Taxes are explicitly configured for this local-pickup store and calculated by Square. Buyer card data stays on Square. Pickup/return/contact policies appear on the storefront.
+- The public Convex snapshot excludes seller earnings, activity, sessions, and credentials.
+
+## Verification
+
+```bash
+npm test
+npm run typecheck
+npm run build
+npm run smoke              # backend on localhost:3000
+cd mobile
+npm run typecheck
+npm run export
+```
+
+See [validation evidence and remaining release checks](docs/VALIDATION.md). Automated tests use fixtures only inside `tests/`; external services are mocked at the test boundary. Passing tests is not proof that your actual payment account, webhook, device permissions, or deployment is correctly configured.

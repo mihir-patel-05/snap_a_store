@@ -5,6 +5,7 @@ export default defineConfig({
   resolve: { alias: { "@": path.resolve(__dirname, ".") } },
   test: {
     environment: "node",
+    env: { DATABASE_PATH: ":memory:" },
     exclude: ["node_modules", ".next", ".claude/worktrees/**", "mobile/**"],
   },
 });

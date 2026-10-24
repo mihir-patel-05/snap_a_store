@@ -1,0 +1,13 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    env_file: .env.local
+    environment:
+      DATABASE_PATH: /app/data/snap-live.sqlite
+    volumes:
+      - store-data:/app/data
+    restart: unless-stopped
+volumes:
+  store-data:

@@ -1,0 +1,8 @@
+.git
+.claude
+node_modules
+.next
+.env*
+data
+artifacts
+mobile

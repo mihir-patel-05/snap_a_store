@@ -1,0 +1,47 @@
+{
+  "name": "snap-a-store-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "ios": "expo start --ios",
+    "android": "expo start --android",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
+    "export": "expo export --platform all"
+  },
+  "dependencies": {
+    "expo": "~58.0.19",
+    "react": "19.3.0",
+    "react-native": "0.88.0",
+    "react-dom": "19.3.0",
+    "react-native-web": "~0.21.4",
+    "expo-image-picker": "~58.0.10",
+    "expo-image-manipulator": "~58.0.15",
+    "expo-secure-store": "~58.0.2",
+    "expo-haptics": "~58.0.7",
+    "expo-crypto": "~58.0.7",
+    "expo-clipboard": "~58.0.4",
+    "expo-status-bar": "~58.0.4",
+    "expo-font": "~58.0.10",
+    "react-native-safe-area-context": "~5.10.1",
+    "react-native-svg": "15.16.0",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "lucide-react-native": "latest",
+    "react-native-qrcode-svg": "latest",
+    "convex": "latest",
+    "@expo-google-fonts/dm-sans": "latest",
+    "@expo-google-fonts/fraunces": "latest"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.0",
+    "typescript": "~5.9.2"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "overrides": {
+    "zod": "4.6.7"
+  }
+}
