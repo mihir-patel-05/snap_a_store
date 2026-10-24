@@ -98,6 +98,7 @@ PORT=3000
 HOSTNAME=0.0.0.0
 DATABASE_PATH=/app/data/snap-live.sqlite
 RAILWAY_RUN_UID=0
+TRUST_PROXY=1
 
 SQUARE_ENVIRONMENT=production
 SQUARE_ACCESS_TOKEN=REPLACE_WITH_PRODUCTION_ACCESS_TOKEN
@@ -122,6 +123,7 @@ Where each value comes from:
 - **Square:** [Developer Console](https://developer.squareup.com/apps) → your application → **Production** credentials and location. Use the same merchant and location for the whole deployment.
 - **Claude:** [Claude Console](https://platform.claude.com/) → API key. API billing is separate from a Claude chat subscription. The configured [Sonnet 5.5 model](https://platform.claude.com/docs/en/models/sonnet-5-5/overview) must be available to your account.
 - **Seller and maintenance:** the three generated values in your local `.env.local` from step 1.
+- **`TRUST_PROXY=1`:** Railway's edge proxy sets `X-Forwarded-For` for every request, so the backend can rate-limit each visitor separately. Without it, all buyers, the seller, and the worker share one limit; a handful of open storefront tabs (each refreshes every 3 seconds) then makes the store answer "Too many requests" for everyone.
 - **Business details:** your real store name, support address, pickup instructions, and return policy. Enter the sales tax percentage as a number without `%`; the app accepts 0–30 with up to four decimal places. Use your applicable rate.
 
 The public URL and webhook signature key come in the following steps. Do not use placeholder credentials to bypass readiness checks. Optional Apify, Cartesia, and Convex variables can be added later using [Service setup](SERVICE-SETUP.md).
@@ -276,6 +278,7 @@ Only public URLs belong in `EXPO_PUBLIC_*`. Keep API keys, password hashes, and 
 | 502 / application failed to respond | Set `PORT=3000`, `HOSTNAME=0.0.0.0`, domain target port `3000`, and start command `node server.js`. Inspect backend deployment logs. |
 | Read-only database / permission denied | Verify volume mount `/app/data`, database path `/app/data/snap-live.sqlite`, and backend variable `RAILWAY_RUN_UID=0`; redeploy. |
 | `/api/health` works but `/api/ready` fails | Read the JSON error and configure the named missing setting. Check HTTPS public URL, business settings, and webhook key. |
+| Several visitors get "Too many requests" | Set `TRUST_PROXY=1` on `snap-backend` and deploy, so each visitor has a separate rate limit. |
 | Seller login fails | Use the original password, not its hash. Copy the entire generated hash into Railway and deploy the variable changes. |
 | Worker gets HTTP 401 | Its maintenance secret must match the backend. Check the service references and redeploy. |
 | Worker reports failures | Inspect backend logs and verify Square credentials, location, and payment status. Do not manually release stock while payment status is uncertain. |
