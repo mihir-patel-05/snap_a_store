@@ -6,6 +6,8 @@ An Expo seller app for iOS and Android, with a public storefront and Square chec
 
 ## Start here
 
+For Railway hosting, follow **[Deploy the backend and web frontend to Railway](docs/RAILWAY-DEPLOYMENT.md)**. The customer storefront and backend share one HTTPS address; the Expo native app connects to it.
+
 Follow **[Service setup and deployment](docs/SERVICE-SETUP.md)**. You need your own Anthropic and Square accounts, a public HTTPS backend for live checkout, and a seller login. Optional Apify, Cartesia, and Convex integrations have complete setup instructions there.
 
 ```bash

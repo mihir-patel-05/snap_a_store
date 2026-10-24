@@ -81,6 +81,8 @@ There is no email provider or public signup. To recover/change access, run this 
 
 ## 4. Public HTTPS backend (required for real checkout)
 
+For managed hosting, follow **[Deploy the backend and web frontend to Railway](RAILWAY-DEPLOYMENT.md)**. It uses the existing Dockerfile, a persistent volume, and a maintenance worker. The instructions below describe the alternative of managing your own Docker Compose host.
+
 A phone's LAN IP is useful for local development, but it cannot receive Square webhooks from the internet. Deploy the backend on a Linux host with Docker Compose, a persistent disk, and a domain pointing to that host. The included deployment uses one backend replica, a maintenance worker, and Caddy for HTTPS.
 
 1. Copy/clone the project onto your server. Install Docker Engine and the Compose plugin. Point a domain's DNS record at the server and allow inbound TCP 80/443. Keep the application port 3000 private.
