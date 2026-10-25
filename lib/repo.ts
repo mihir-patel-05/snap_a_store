@@ -40,9 +40,9 @@ export function createRepo(
 ) {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path);
+  db.pragma("busy_timeout = 5000");
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
-  db.pragma("busy_timeout = 5000");
   db.exec(`CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, store_id TEXT NOT NULL, credential_version TEXT NOT NULL, expires_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS primary_stores (environment TEXT PRIMARY KEY, store_id TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS limits (key TEXT PRIMARY KEY, count INTEGER NOT NULL, until INTEGER NOT NULL);
