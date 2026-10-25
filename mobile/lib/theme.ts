@@ -1,28 +1,27 @@
 // Shared design tokens for the native seller app.
-//
-// Palette: a kitchen table in afternoon light. Linen paper, espresso ink,
-// worn denim for the one brand action, and brass for the italic accent, the
-// way a brass lamp catches the eye among pre-loved things. Status colors are
-// olive (live, ready) and clay (needs attention). Every text pairing clears
-// WCAG AA against the surface it sits on; ratios are noted beside each token.
+// Palette is unchanged from the original design; the type scale follows the
+// iOS Dynamic Type "Large (default)" table so text stays legible without
+// losing the serif-and-italic voice of the storefront.
 export const C = {
-  paper: "#f5f1e8", // linen background
-  white: "#fffdf8", // cards and inputs
-  stone: "#ebe5d8", // tinted surfaces: hero, badges, store card
-  stoneLine: "#ddd5c4", // borders on stone surfaces, sheet grabber
-  stoneDeep: "#d8cfbb", // store avatar
-  wash: "#e3e8f0", // denim wash: selected tab, open storefront row
-  line: "#e0d9cb", // hairlines on paper and white
-  ink: "#26231f", // espresso text, 13.9:1 on paper
-  muted: "#6b655a", // secondary text, 5.1:1 on paper, 4.6:1 on stone
-  denim: "#34507c", // primary action and brand, 7.2:1 on paper
-  brass: "#8f6418", // the italic accent, 4.65:1 on paper
-  live: "#5c7a3a", // olive: live, ready, configured
-  clay: "#c2603a", // needs attention
-  quiet: "#a9a195", // inactive dots and chevrons (non-text)
-  danger: "#9a3b2a", // 6.1:1 on paper
-  errorBg: "#f7e3d8",
-  errorInk: "#8d3a26", // 6.1:1 on errorBg
+  paper: "#f8f7f1",
+  ink: "#193d33",
+  // Secondary text. Darkened one step from #77816f so 13–16 pt copy clears
+  // 4.5:1 on paper (4.84:1) and on the sage tint (4.36:1 at 15 pt+ semibold / 3:1).
+  muted: "#66705e",
+  line: "#e1e5d8",
+  green: "#214c3e",
+  lime: "#d9ef9b",
+  orange: "#df805e",
+  white: "#fffefa",
+  danger: "#8b3d28",
+  // Tinted surfaces and accents that were previously inline literals.
+  sage: "#e9eddf",
+  sageLine: "#d9dfcb",
+  moss: "#778b60", // the italic accent, kept exactly as before
+  leaf: "#73925c", // "ready" / live indicator
+  quiet: "#a6ac99", // inactive dots and chevrons (non-text)
+  errorBg: "#f8e4d8",
+  errorInk: "#913e2b",
 };
 export const F = {
   regular: "DMSans_400Regular",
