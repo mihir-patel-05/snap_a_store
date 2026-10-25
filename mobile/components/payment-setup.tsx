@@ -163,7 +163,7 @@ export function PaymentSetup({
       >
         <Text style={s.buttonText}>Save store settings</Text>
       </Pressable>
-      {busy && <ActivityIndicator color={C.green} />}
+      {busy && <ActivityIndicator color={C.denim} />}
       {!!error && (
         <Text accessibilityRole="alert" style={s.error}>
           {error}
@@ -217,7 +217,7 @@ const s = StyleSheet.create({
   },
   button: {
     minHeight: 56,
-    backgroundColor: C.green,
+    backgroundColor: C.denim,
     padding: 16,
     borderRadius: 14,
     alignItems: "center",
@@ -241,7 +241,7 @@ const s = StyleSheet.create({
     backgroundColor: "white",
     marginBottom: 8,
   },
-  selected: { backgroundColor: C.sage, borderColor: C.green },
+  selected: { backgroundColor: C.wash, borderColor: C.denim },
   locationText: { fontFamily: F.medium, ...T.callout, color: C.ink },
-  locationTextOn: { fontFamily: F.semi, color: C.green },
+  locationTextOn: { fontFamily: F.semi, color: C.denim },
 });

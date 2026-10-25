@@ -294,7 +294,7 @@ const s = StyleSheet.create({
     letterSpacing: -0.9,
     color: C.ink,
   },
-  italic: { fontFamily: F.italic, color: C.moss },
+  italic: { fontFamily: F.italic, color: C.brass },
   row: { flexDirection: "row", alignItems: "center", gap: 14 },
   field: { flex: 1, gap: 8 },
   label: {
@@ -333,10 +333,10 @@ const s = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "white",
   },
-  selected: { backgroundColor: C.green, borderColor: C.green },
+  selected: { backgroundColor: C.denim, borderColor: C.denim },
   choiceText: { fontFamily: F.medium, ...T.subhead, color: C.ink },
   choiceTextOn: { color: "white" },
-  link: { fontFamily: F.semi, ...T.subhead, color: C.green },
+  link: { fontFamily: F.semi, ...T.subhead, color: C.denim },
   error: {
     fontFamily: F.regular,
     ...T.subhead,
@@ -347,7 +347,7 @@ const s = StyleSheet.create({
     borderRadius: R.sm,
   },
   save: {
-    backgroundColor: C.green,
+    backgroundColor: C.denim,
     minHeight: 56,
     padding: 16,
     borderRadius: 14,
