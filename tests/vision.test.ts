@@ -2,10 +2,13 @@ import { describe, expect, it, vi, afterEach } from "vitest";
 const { create } = vi.hoisted(() => ({ create: vi.fn() }));
 vi.mock("@anthropic-ai/sdk", () => ({
   default: class {
+    static APIUserAbortError = class extends Error {};
+    static APIConnectionTimeoutError = class extends Error {};
     messages = { create };
   },
 }));
-import { scanPhoto } from "../lib/providers/vision";
+import Anthropic from "@anthropic-ai/sdk";
+import { scanPhoto, SCAN_DEADLINE_MS } from "../lib/providers/vision";
 afterEach(() => {
   vi.unstubAllEnvs();
   create.mockReset();
@@ -40,6 +43,8 @@ describe("Claude photo scan", () => {
     expect(params.tool_choice).toBeUndefined();
     expect(params.tools).toBeUndefined();
     expect(params.output_config.format.type).toBe("json_schema");
+    expect(params.output_config.effort).toBe("low");
+    expect(create.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({
       name: "Blue mug",
@@ -59,5 +64,18 @@ describe("Claude photo scan", () => {
     await expect(scanPhoto(Buffer.from("jpeg"))).rejects.toThrow(
       "incomplete listings",
     );
+  });
+  it("fails clearly when Claude cannot answer before the phone gives up", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "test-key");
+    expect(SCAN_DEADLINE_MS).toBeLessThan(60_000);
+    create.mockRejectedValueOnce(new Anthropic.APIUserAbortError());
+    await expect(scanPhoto(Buffer.from("jpeg"))).rejects.toMatchObject({
+      status: 504,
+      message: expect.stringContaining("took too long"),
+    });
+    create.mockRejectedValueOnce(new Anthropic.APIConnectionTimeoutError());
+    await expect(scanPhoto(Buffer.from("jpeg"))).rejects.toMatchObject({
+      status: 504,
+    });
   });
 });

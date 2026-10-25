@@ -57,9 +57,17 @@ export async function api<T>(
         : {}),
       signal: AbortSignal.timeout(65000),
     });
-  } catch {
+  } catch (e) {
+    // The abort timer rejects with TimeoutError/AbortError; iOS reports its own limit as "Network request timed out".
+    const { name, message } = (e ?? {}) as { name?: string; message?: string };
+    const timedOut =
+      name === "TimeoutError" ||
+      name === "AbortError" ||
+      /timed out/i.test(message || "");
     throw new Error(
-      `Can't reach your store server. Check your connection and EXPO_PUBLIC_API_URL (${API_URL}).`,
+      timedOut
+        ? "Your store server took too long to respond. Please try again."
+        : `Can't reach your store server. Check your connection and EXPO_PUBLIC_API_URL (${API_URL}).`,
     );
   }
   let data;
