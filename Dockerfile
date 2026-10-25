@@ -4,6 +4,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 make g+
 COPY package*.json ./
 RUN npm ci
 COPY . .
+# Build-time code must not use an on-disk SQLite file.
+ENV DATABASE_PATH=:memory:
 RUN npm run build
 
 FROM node:22-bookworm-slim AS runner
