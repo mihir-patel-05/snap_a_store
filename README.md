@@ -37,6 +37,10 @@ Set `EXPO_PUBLIC_API_URL` to your backend origin. Google sign-in uses an install
 
 This deployment supports **multiple sellers, one Square merchant/location per store, USD prices, and local pickup**. Google sellers connect their own Square accounts; the existing password seller keeps the configured platform account. A seller can sign in on multiple devices. Shipping and app-based refunds are not implemented. Manage refunds/disputes in Square; refunded stock is not automatically relisted. Dedicated inventory sold through this app is authoritative in SQLite; don't sell the same reserved stock through a separate channel. Apify and Cartesia are optional; durable inventory does not require Convex.
 
+Each seller can run **several storefronts** (up to 20), for example one per sale or collection. Each storefront has its own link, QR code, inventory, and sales stats. Sellers only ever see and manage their own storefronts. The password seller's storefronts all use the configured Square account, location, tax rate, and pickup/return policies. A Google seller's new storefront starts with their saved contact, pickup, return, and tax details, and connects Square and chooses its location the same way as their first storefront. Switch storefronts from the top bar in the app or the storefront row in `/studio`.
+
+Delete a storefront from the **Delete this storefront** card in `/studio` or the app's Connections tab, after retyping its name. Deleting removes its link and QR code, listings, photos, its items in the Square catalog, its saved Square connection, its Convex projection, and this app's records of its orders; payments and receipts stay in Square. A storefront with a buyer's checkout still open can't be deleted until that checkout is paid or expires. Deleting your only storefront opens a new empty one.
+
 Run one backend replica on persistent local storage. The supplied production Compose configuration adds HTTPS through Caddy and a maintenance worker that reconciles payments and cancels expired checkouts only after Square confirms they are unpaid. Do not deploy this SQLite service on an ephemeral/serverless filesystem.
 
 ## Security and payment behavior
@@ -44,6 +48,7 @@ Run one backend replica on persistent local storage. The supplied production Com
 - Google sign-in verifies signed identity tokens, browser-bound state, and nonces; native callbacks use one-time codes bound to PKCE. Stores are keyed by Google subject, never matched by email.
 - Opaque sessions are hashed and expire after 30 days. Web sessions use HttpOnly cookies; native sessions use SecureStore. Legacy passwords use scrypt, and changing the configured password revokes password sessions.
 - Square OAuth access/refresh tokens are encrypted with AES-256-GCM. Catalogs, checkout, reconciliation, and webhooks resolve the owning store's merchant/location.
+- Storefronts belong to one account: a Google subject or the password seller. Listing, creating, managing, and deleting storefronts are limited to the signed-in account's own storefronts.
 - A checkout key survives retries. The browser supports HTTP environments without `crypto.randomUUID()` using secure random bytes or server-issued UUIDs; it never falls back to `Math.random()`.
 - Square catalog publication and payment-link creation use stable idempotency keys. Stock reservations survive process restarts and uncertain network failures.
 - A signed webhook or authenticated Square payment lookup verifies order, location, currency, amount, and completion. Browser redirects cannot mark orders paid.

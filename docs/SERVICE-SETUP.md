@@ -65,6 +65,8 @@ SALES_TAX_PERCENT=your_applicable_percentage
 DATABASE_PATH=data/snap-live.sqlite
 ```
 
+`BUSINESS_NAME` also names the password seller's first storefront. After signing in, any seller can open more storefronts (up to 20) from the storefront switcher in the app or `/studio`. The password seller's storefronts all use these business settings and the same Square location. A Google seller's new storefront copies their saved business details and connects Square separately.
+
 `SALES_TAX_PERCENT` is a number from 0 to 30, up to four decimal places. For example, `8.625` means 8.625%. Set `0` only when appropriate for your sales. The application does not determine tax obligations or automatically choose rates by jurisdiction. It applies this configured rate to all items; businesses with exemptions or multiple tax jurisdictions need more tax logic before using this deployment for those sales.
 
 Create the seller login locally:
@@ -171,6 +173,8 @@ openssl rand -hex 32
 npx convex deploy
 npx convex env set --prod CONVEX_SYNC_SECRET 'YOUR_GENERATED_SECRET'
 ```
+
+Run `npx convex deploy` again after upgrading the app. Deleting a storefront calls `inventory:remove`; until it is deployed, the backend logs that Convex sync is pending and keeps retrying the removal.
 
 4. Copy the **production** `.convex.cloud` URL from the Convex dashboard into:
 

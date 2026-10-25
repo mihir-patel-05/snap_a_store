@@ -13,12 +13,19 @@ import type {
   Order,
   Store,
   StoreSnapshot,
+  StoreSummary,
   StoreBusiness,
 } from "./contracts";
 import { AppError } from "./server/errors";
 import { credentialVersion } from "./server/auth";
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
 const now = () => new Date().toISOString();
+const MAX_STORES = 20;
+// seller_stores.environment is the owning account's scope. The password seller has
+// one scope per Square environment and location; each Google seller has their own.
+const environmentOf = (s: Store) => `${s.paymentMode}:${s.locationId ?? ""}`;
+export const googleScope = (subject: string, mode: Store["paymentMode"]) =>
+  `google:${mode}:${subject}`;
 export function createRepo(
   path = process.env.DATABASE_PATH || "data/snap-live.sqlite",
 ) {
@@ -41,8 +48,15 @@ export function createRepo(
     CREATE TABLE IF NOT EXISTS google_accounts (subject TEXT NOT NULL, environment TEXT NOT NULL, store_id TEXT NOT NULL REFERENCES stores(id), PRIMARY KEY(subject, environment));
     CREATE TABLE IF NOT EXISTS oauth_tickets (hash TEXT PRIMARY KEY, data TEXT NOT NULL, expires_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS square_connections (store_id TEXT PRIMARY KEY REFERENCES stores(id), merchant_id TEXT NOT NULL, encrypted TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS seller_stores (store_id TEXT PRIMARY KEY REFERENCES stores(id), environment TEXT NOT NULL, request_key TEXT UNIQUE, created_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS convex_removals (store_id TEXT PRIMARY KEY);
     CREATE INDEX IF NOT EXISTS items_store ON items(store_id);
-    CREATE INDEX IF NOT EXISTS orders_store ON orders(store_id);`);
+    CREATE INDEX IF NOT EXISTS orders_store ON orders(store_id);
+    CREATE INDEX IF NOT EXISTS seller_stores_environment ON seller_stores(environment, created_at);
+    INSERT OR IGNORE INTO seller_stores (store_id, environment, created_at)
+      SELECT p.store_id, p.environment, json_extract(s.data, '$.createdAt') FROM primary_stores p JOIN stores s ON s.id = p.store_id;
+    INSERT OR IGNORE INTO seller_stores (store_id, environment, created_at)
+      SELECT g.store_id, 'google:' || g.environment || ':' || g.subject, json_extract(s.data, '$.createdAt') FROM google_accounts g JOIN stores s ON s.id = g.store_id;`);
   function get<T>(sql: string, ...args: string[]): T | undefined {
     const row = db.prepare(sql).get(...args) as { data: string } | undefined;
     return row ? (JSON.parse(row.data) as T) : undefined;
@@ -75,6 +89,13 @@ export function createRepo(
       JSON.stringify(order),
     );
   }
+  const openOrders = (id: string) =>
+    orders(id).some((o) => o.state === "creating" || o.state === "pending");
+  const checkoutOpen = () =>
+    new AppError(
+      409,
+      "A buyer has a checkout open in this storefront. Try again once it is paid or expires (within about 30 minutes).",
+    );
   function touch(id: string, message?: string) {
     const s = store(id)!;
     s.revision++;
@@ -93,6 +114,45 @@ export function createRepo(
         now(),
       );
   }
+  // Every store belongs to one account scope in seller_stores.
+  const createStore = db.transaction(
+    (
+      name: string,
+      mode: Store["paymentMode"] = "production",
+      provider: Store["paymentProvider"] = "platform",
+      options: {
+        scope?: string;
+        requestKey?: string;
+        business?: StoreBusiness;
+      } = {},
+    ) => {
+      const s: Store = {
+        id: randomUUID(),
+        name,
+        tagline: "Good finds. New beginnings.",
+        createdAt: now(),
+        revision: 0,
+        paymentMode: mode,
+        locationId:
+          provider === "platform" ? process.env.SQUARE_LOCATION_ID : undefined,
+        paymentProvider: provider,
+        ...(options.business ? { business: options.business } : {}),
+      };
+      const token = randomBytes(32).toString("hex");
+      db.prepare("INSERT INTO stores VALUES(?,?,?)").run(
+        s.id,
+        hash(token),
+        JSON.stringify(s),
+      );
+      db.prepare("INSERT INTO seller_stores VALUES(?,?,?,?)").run(
+        s.id,
+        options.scope ?? environmentOf(s),
+        options.requestKey ?? null,
+        s.createdAt,
+      );
+      return { store: s, token };
+    },
+  );
   function snapshot(id: string): StoreSnapshot {
     const s = store(id);
     if (!s) throw new AppError(404, "Store not found.");
@@ -145,30 +205,146 @@ export function createRepo(
           .all() as { data: string }[]
       ).map((r) => JSON.parse(r.data) as Order);
     },
-    createStore(
-      name: string,
-      mode: Store["paymentMode"] = "production",
-      provider: Store["paymentProvider"] = "platform",
-    ) {
-      const s: Store = {
-        id: randomUUID(),
-        name,
-        tagline: "Good finds. New beginnings.",
-        createdAt: now(),
-        revision: 0,
-        paymentMode: mode,
-        locationId:
-          provider === "platform" ? process.env.SQUARE_LOCATION_ID : undefined,
-        paymentProvider: provider,
-      };
-      const token = randomBytes(32).toString("hex");
-      db.prepare("INSERT INTO stores VALUES(?,?,?)").run(
-        s.id,
-        hash(token),
-        JSON.stringify(s),
-      );
-      return { store: s, token };
+    createStore,
+    sellerStores(environment: string): StoreSummary[] {
+      const ids = db
+        .prepare(
+          "SELECT store_id FROM seller_stores WHERE environment=? ORDER BY created_at, rowid",
+        )
+        .all(environment) as { store_id: string }[];
+      return ids.map(({ store_id }) => {
+        const snap = snapshot(store_id);
+        return {
+          ...snap.store,
+          listed: snap.items.length,
+          available: snap.items.reduce((sum, i) => sum + i.available, 0),
+        };
+      });
     },
+    scopeOf(id: string) {
+      return (
+        db
+          .prepare("SELECT environment FROM seller_stores WHERE store_id=?")
+          .get(id) as { environment: string } | undefined
+      )?.environment;
+    },
+    addStore: db.transaction(
+      (
+        environment: string,
+        name: string,
+        mode: Store["paymentMode"],
+        requestKey: string,
+        provider: Store["paymentProvider"] = "platform",
+        business?: StoreBusiness,
+      ) => {
+        const existing = db
+          .prepare(
+            "SELECT store_id FROM seller_stores WHERE request_key=? AND environment=?",
+          )
+          .get(requestKey, environment) as { store_id: string } | undefined;
+        if (existing) return store(existing.store_id)!;
+        const { count } = db
+          .prepare(
+            "SELECT COUNT(*) AS count FROM seller_stores WHERE environment=?",
+          )
+          .get(environment) as { count: number };
+        if (count >= MAX_STORES)
+          throw new AppError(
+            409,
+            `You can run up to ${MAX_STORES} storefronts. Delete or rename one you no longer use.`,
+          );
+        if (
+          db
+            .prepare("SELECT 1 FROM seller_stores WHERE request_key=?")
+            .get(requestKey)
+        )
+          throw new AppError(409, "This request key was already used.");
+        return createStore(name, mode, provider, {
+          scope: environment,
+          requestKey,
+          business,
+        }).store;
+      },
+    ),
+    // Stops new checkouts and publishing, then returns what Square must delete.
+    closeStore: db.transaction((id: string) => {
+      const s = store(id);
+      if (!s) throw new AppError(404, "Store not found.");
+      if (openOrders(id)) throw checkoutOpen();
+      if (!s.closing) {
+        s.closing = true;
+        db.prepare("UPDATE stores SET data=? WHERE id=?").run(
+          JSON.stringify(s),
+          id,
+        );
+        touch(id);
+      }
+      return {
+        catalogIds: items(id).flatMap((i) =>
+          i.catalogId ? [i.catalogId] : [],
+        ),
+        // A publish with an uncertain result may have created Square items.
+        publishing: (
+          db
+            .prepare(
+              "SELECT id,items FROM publishes WHERE store_id=? AND state='creating'",
+            )
+            .all(id) as { id: string; items: string }[]
+        ).map((p) => ({ key: p.id, items: JSON.parse(p.items) as Item[] })),
+      };
+    }),
+    // Permanently removes a closed storefront and everything this app stored for it.
+    // The oldest remaining storefront becomes primary; if none remain, a new empty one opens.
+    deleteStore: db.transaction((id: string, fallbackName: string) => {
+      const s = store(id);
+      if (!s) throw new AppError(404, "Store not found.");
+      if (!s.closing)
+        throw new AppError(409, "Close this storefront before deleting it.");
+      if (openOrders(id)) throw checkoutOpen();
+      const { environment } = db
+        .prepare("SELECT environment FROM seller_stores WHERE store_id=?")
+        .get(id) as { environment: string };
+      for (const table of [
+        "orders",
+        "items",
+        "publishes",
+        "photos",
+        "activity",
+        "outbox",
+        "square_connections",
+        "seller_stores",
+      ])
+        db.prepare(`DELETE FROM ${table} WHERE store_id=?`).run(id);
+      const remaining = db
+        .prepare(
+          "SELECT store_id FROM seller_stores WHERE environment=? ORDER BY created_at, rowid LIMIT 1",
+        )
+        .get(environment) as { store_id: string } | undefined;
+      const next =
+        remaining?.store_id ??
+        createStore(fallbackName, s.paymentMode, s.paymentProvider, {
+          scope: environment,
+        }).store.id;
+      if (environment.startsWith("google:"))
+        db.prepare(
+          "UPDATE google_accounts SET store_id=? WHERE store_id=?",
+        ).run(next, id);
+      else {
+        const primary = db
+          .prepare("SELECT store_id FROM primary_stores WHERE environment=?")
+          .get(environment) as { store_id: string } | undefined;
+        if (!primary || primary.store_id === id)
+          db.prepare(
+            "INSERT INTO primary_stores VALUES(?,?) ON CONFLICT(environment) DO UPDATE SET store_id=excluded.store_id",
+          ).run(environment, next);
+      }
+      db.prepare("UPDATE sessions SET store_id=? WHERE store_id=?").run(
+        next,
+        id,
+      );
+      db.prepare("DELETE FROM stores WHERE id=?").run(id);
+      db.prepare("INSERT OR IGNORE INTO convex_removals VALUES(?)").run(id);
+    }),
     primaryStore(
       environment: string,
       name: string,
@@ -179,7 +355,9 @@ export function createRepo(
           .prepare("SELECT store_id FROM primary_stores WHERE environment=?")
           .get(environment) as { store_id: string } | undefined;
         if (existing) return store(existing.store_id)!;
-        const created = this.createStore(name, mode).store;
+        const created = createStore(name, mode, "platform", {
+          scope: environment,
+        }).store;
         db.prepare("INSERT INTO primary_stores VALUES(?,?)").run(
           environment,
           created.id,
@@ -195,7 +373,9 @@ export function createRepo(
           )
           .get(subject, mode) as { store_id: string } | undefined;
         if (existing) return store(existing.store_id)!;
-        const created = this.createStore(name, mode, "square_oauth").store;
+        const created = createStore(name, mode, "square_oauth", {
+          scope: googleScope(subject, mode),
+        }).store;
         db.prepare("INSERT INTO google_accounts VALUES(?,?,?)").run(
           subject,
           mode,
@@ -223,6 +403,7 @@ export function createRepo(
         return store(id)!;
       })();
     },
+    // store_id is the account's primary storefront: the one opened at sign-in.
     createSession(id: string, kind: "password" | "google" = "password") {
       const token = randomBytes(32).toString("hex");
       db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(Date.now());
@@ -234,22 +415,44 @@ export function createRepo(
       );
       return token;
     },
-    session(token: string) {
+    // The signed-in account: its primary storefront, scope, and sign-in method.
+    account(token: string) {
       const row = db
         .prepare(
-          "SELECT store_id FROM sessions WHERE token_hash=? AND (credential_version=? OR (credential_version='google' AND store_id IN (SELECT store_id FROM google_accounts))) AND expires_at>?",
+          "SELECT store_id,credential_version FROM sessions WHERE token_hash=? AND (credential_version=? OR (credential_version='google' AND store_id IN (SELECT store_id FROM google_accounts))) AND expires_at>?",
         )
         .get(hash(token), credentialVersion(), Date.now()) as
-        { store_id: string } | undefined;
+        { store_id: string; credential_version: string } | undefined;
       if (!row)
         throw new AppError(401, "Please sign in to your seller account.");
-      return store(row.store_id)!;
+      return {
+        store: store(row.store_id)!,
+        google: row.credential_version === "google",
+        scope: this.scopeOf(row.store_id),
+      };
+    },
+    session(token: string) {
+      return this.account(token).store;
     },
     revokeSession(token: string) {
       db.prepare("DELETE FROM sessions WHERE token_hash=?").run(hash(token));
     },
+    // A Google seller manages the storefronts in their own scope. The password seller
+    // manages the storefronts in password scopes (those with a primary store).
     authorize(id: string, token: string) {
-      if (this.session(token).id !== id)
+      const account = this.account(token);
+      const scope = this.scopeOf(id);
+      const allowed =
+        account.store.id === id ||
+        (scope !== undefined &&
+          (account.google
+            ? scope === account.scope
+            : Boolean(
+                db
+                  .prepare("SELECT 1 FROM primary_stores WHERE environment=?")
+                  .get(scope),
+              )));
+      if (!allowed)
         throw new AppError(403, "This store belongs to another seller.");
     },
     limit: db.transaction((key: string, maximum: number, windowMs = 60_000) => {
@@ -288,6 +491,7 @@ export function createRepo(
       touch(id);
     }),
     savePhoto(id: string, bytes: Buffer) {
+      if (!store(id)) throw new AppError(404, "Store not found.");
       const photoId = randomUUID();
       db.prepare("INSERT INTO photos VALUES(?,?,?)").run(photoId, id, bytes);
       return photoId;
@@ -305,6 +509,8 @@ export function createRepo(
     },
     beginPublish: db.transaction(
       (id: string, key: string, drafts: DraftItem[]) => {
+        if (store(id)?.closing)
+          throw new AppError(409, "This storefront is being deleted.");
         const fp = hash(JSON.stringify(drafts));
         const old = db
           .prepare("SELECT * FROM publishes WHERE id=?")
@@ -379,7 +585,8 @@ export function createRepo(
     finishPublish: db.transaction((id: string, key: string, made: Item[]) => {
       const row = db
         .prepare("SELECT state FROM publishes WHERE id=? AND store_id=?")
-        .get(key, id) as { state: string };
+        .get(key, id) as { state: string } | undefined;
+      if (!row) throw new AppError(404, "This storefront was deleted.");
       if (row.state === "done") return;
       for (const item of made)
         db.prepare("INSERT INTO items VALUES(?,?,?)").run(
@@ -417,6 +624,11 @@ export function createRepo(
           return existing;
         }
         const snap = snapshot(id);
+        if (snap.store.closing)
+          throw new AppError(
+            409,
+            "This storefront is closing and no longer takes orders.",
+          );
         const details = lines.map((l) => {
           const item = snap.items.find((i) => i.id === l.itemId);
           if (!item || item.available < l.quantity)
@@ -551,6 +763,16 @@ export function createRepo(
         id,
         revision,
       );
+    },
+    convexRemovals() {
+      return (
+        db.prepare("SELECT store_id FROM convex_removals LIMIT 20").all() as {
+          store_id: string;
+        }[]
+      ).map((r) => r.store_id);
+    },
+    convexRemoved(id: string) {
+      db.prepare("DELETE FROM convex_removals WHERE store_id=?").run(id);
     },
     close() {
       db.close();

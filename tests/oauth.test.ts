@@ -47,7 +47,7 @@ beforeEach(() => {
   }))
     vi.stubEnv(k, v);
   repo.db.exec(
-    "DELETE FROM oauth_tickets; DELETE FROM google_accounts; DELETE FROM square_connections; DELETE FROM limits; DELETE FROM jobs; DELETE FROM sessions; DELETE FROM primary_stores; DELETE FROM outbox; DELETE FROM activity; DELETE FROM publishes; DELETE FROM photos; DELETE FROM orders; DELETE FROM items; DELETE FROM stores;",
+    "DELETE FROM oauth_tickets; DELETE FROM google_accounts; DELETE FROM square_connections; DELETE FROM limits; DELETE FROM jobs; DELETE FROM sessions; DELETE FROM primary_stores; DELETE FROM outbox; DELETE FROM activity; DELETE FROM publishes; DELETE FROM photos; DELETE FROM orders; DELETE FROM items; DELETE FROM seller_stores; DELETE FROM convex_removals; DELETE FROM stores;",
   );
 });
 afterEach(() => {
@@ -539,5 +539,134 @@ describe("Per-seller Square onboarding and payment routing", () => {
     expect((await send("merchant-1")).status).toBe(200);
     expect((await send("merchant-1")).status).toBe(200);
     expect(repo.order(order.id)?.state).toBe("paid");
+  });
+});
+describe("Storefronts for Google sellers", () => {
+  const remove = (id: string, name: string, token: string) =>
+    post("/stores/" + id, { name }, token, "DELETE");
+  const json = async (r: Promise<Response>) => (await r).json();
+  it("keeps each seller's storefronts to themselves", async () => {
+    const a = await webLogin("A"),
+      b = await webLogin("B");
+    const legacy = repo.primaryStore(
+      "production:legacy-location",
+      "Legacy store",
+      "production",
+    );
+    const legacyToken = repo.createSession(legacy.id);
+    expect(
+      (
+        await post(
+          "/stores/" + a.store.id + "/square",
+          { business: settings },
+          a.token,
+          "PATCH",
+        )
+      ).status,
+    ).toBe(200);
+    const created = await post(
+      "/stores",
+      { name: "Spring table", requestKey: randomUUID() },
+      a.token,
+    );
+    expect(created.status).toBe(200);
+    const { store, stores } = await created.json();
+    // A new storefront keeps the seller's details but connects Square separately.
+    expect(store).toMatchObject({
+      paymentProvider: "square_oauth",
+      business: settings,
+    });
+    expect(store.merchantId).toBeUndefined();
+    expect(store.locationId).toBeUndefined();
+    expect(stores.map((s: { id: string }) => s.id)).toEqual([
+      a.store.id,
+      store.id,
+    ]);
+    const session = await (
+      await handle(
+        new Request(base + "/api/auth/session", {
+          headers: { Authorization: "Bearer " + a.token },
+        }),
+      )
+    ).json();
+    expect(session.store.id).toBe(a.store.id);
+    expect(session.stores).toHaveLength(2);
+    const listed = async (token: string) =>
+      (
+        await json(
+          handle(
+            new Request(base + "/api/stores", {
+              headers: { Authorization: "Bearer " + token },
+            }),
+          ),
+        )
+      ).stores.map((s: { id: string }) => s.id);
+    expect(await listed(b.token)).toEqual([b.store.id]);
+    expect(await listed(legacyToken)).toEqual([legacy.id]);
+    for (const token of [b.token, legacyToken]) {
+      expect(
+        (await post("/stores/" + store.id, { name: "Mine" }, token, "PATCH"))
+          .status,
+      ).toBe(403);
+      expect((await remove(store.id, "Spring table", token)).status).toBe(403);
+    }
+    expect((await remove(legacy.id, "Legacy store", a.token)).status).toBe(403);
+    expect(repo.store(store.id)?.name).toBe("Spring table");
+    expect(
+      (
+        await handle(
+          new Request(base + "/api/stores/" + store.id + "/square", {
+            headers: { Authorization: "Bearer " + a.token },
+          }),
+        )
+      ).status,
+    ).toBe(200);
+  });
+  it("deletes a seller's storefront with their own Square token and keeps them signed in", async () => {
+    const a = await webLogin("A");
+    const fetch = squareMock();
+    await connectSquare(a.store.id, "code", base + "/api/auth/square/callback");
+    const key = randomUUID();
+    const batch = repo.beginPublish(a.store.id, key, [fixtureItems[1]]);
+    repo.finishPublish(
+      a.store.id,
+      key,
+      batch.items.map((i) => ({ ...i, catalogId: "seller-item" })),
+    );
+    const second = (
+      await json(
+        post(
+          "/stores",
+          { name: "Second table", requestKey: randomUUID() },
+          a.token,
+        ),
+      )
+    ).store;
+    const response = await remove(a.store.id, a.store.name, a.token);
+    expect(response.status).toBe(200);
+    expect((await response.json()).store.id).toBe(second.id);
+    const call = fetch.mock.calls.find((c) =>
+      String(c[0]).endsWith("/v2/catalog/batch-delete"),
+    ) as unknown as [string, RequestInit];
+    expect(JSON.parse(String(call[1].body))).toEqual({
+      object_ids: ["seller-item"],
+    });
+    expect((call[1].headers as Record<string, string>).Authorization).toBe(
+      "Bearer seller-token",
+    );
+    expect(
+      repo.db
+        .prepare("SELECT 1 FROM square_connections WHERE store_id=?")
+        .get(a.store.id),
+    ).toBeUndefined();
+    expect(repo.session(a.token).id).toBe(second.id);
+    const last = await remove(second.id, "Second table", a.token);
+    expect(last.status).toBe(200);
+    const fresh = (await last.json()).store;
+    expect(fresh).toMatchObject({ paymentProvider: "square_oauth" });
+    expect(fresh.id).not.toBe(second.id);
+    expect(repo.session(a.token).id).toBe(fresh.id);
+    // Signing in again opens the replacement storefront, not a new account.
+    expect((await webLogin("A")).store.id).toBe(fresh.id);
   });
 });

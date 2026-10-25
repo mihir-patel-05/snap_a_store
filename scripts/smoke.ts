@@ -9,18 +9,21 @@ async function main() {
   assert.match(key.key, /^[a-f0-9-]{36}$/);
   const session = await fetch(`${base}/api/auth/session`);
   assert.equal(session.status, 401);
-  for (const path of ["sample", "stores"]) {
+  for (const [path, status] of [
+    ["sample", 404],
+    ["stores", 401],
+  ] as const) {
     const response = await fetch(`${base}/api/${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "{}",
     });
-    assert.equal(response.status, 404);
+    assert.equal(response.status, status);
   }
   const studio = await fetch(`${base}/studio`);
   assert.equal(studio.status, 200);
   console.log(
-    "PASS: server reachable, secure request keys, seller authentication, retired endpoints inaccessible. No payments or catalog writes performed.",
+    "PASS: server reachable, secure request keys, seller authentication, storefront creation requires sign-in, retired endpoints inaccessible. No payments or catalog writes performed.",
   );
 }
 main().catch((e) => {

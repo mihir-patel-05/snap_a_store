@@ -86,6 +86,17 @@ export async function createCatalog(items: Item[], key: string) {
     return { ...i, catalogId, variationId };
   });
 }
+// Deleting an item also deletes its variations. Square reports partial success
+// for objects that are already gone, so a retry after a timeout is safe.
+export async function deleteCatalog(ids: string[], storeId: string) {
+  for (let n = 0; n < ids.length; n += 200)
+    await square(
+      "/catalog/batch-delete",
+      { object_ids: ids.slice(n, n + 200) },
+      "POST",
+      storeId,
+    );
+}
 export async function createPaymentLink(order: Order, base: string) {
   const result = await square<{
     payment_link: { id: string; url: string; order_id: string };

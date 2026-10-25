@@ -22,11 +22,18 @@ import {
   money,
   type DraftItem,
   type Store,
+  type StoreSummary,
+  type StoreSnapshot,
   type Comparison,
 } from "@/lib/contracts";
+type SellerStores = { store: Store; stores: StoreSummary[] };
+const activeStoreKey = "snap-active-store";
 export default function Studio() {
   const [methods, setMethods] = useState({ google: false, password: true });
   const [store, setStore] = useState<Store | null>(null),
+    [stores, setStores] = useState<StoreSummary[]>([]),
+    [newStoreName, setNewStoreName] = useState<string | null>(null),
+    [deleteName, setDeleteName] = useState<string | null>(null),
     [restoredStore, setRestoredStore] = useState(""),
     [publishLocked, setPublishLocked] = useState(false),
     [drafts, setDrafts] = useState<DraftItem[]>([]),
@@ -43,7 +50,8 @@ export default function Studio() {
       note: string;
     } | null>(null);
   const input = useRef<HTMLInputElement>(null),
-    key = useRef("");
+    key = useRef(""),
+    storeKey = useRef("");
   useEffect(() => {
     void api<{ google: boolean; password: boolean }>("/auth/methods")
       .then(setMethods)
@@ -54,11 +62,8 @@ export default function Studio() {
     returned.searchParams.delete("auth_error");
     returned.searchParams.delete("square");
     window.history.replaceState(null, "", returned.toString());
-    api<{ store: Store }>("/auth/session")
-      .then((r) => {
-        setStore(r.store);
-        setName(r.store.name);
-      })
+    api<SellerStores>("/auth/session")
+      .then(openSession)
       .catch(() => {})
       .finally(() => setBooted(true));
   }, []);
@@ -67,15 +72,17 @@ export default function Studio() {
       setRestoredStore("");
       return;
     }
+    // Drafts belong to one storefront; switching must never carry them to another.
+    let draft: { items?: DraftItem[]; key?: string; locked?: boolean } | null =
+      null;
     try {
-      const saved = localStorage.getItem(`snap-draft-v2:${store.id}`);
-      if (saved) {
-        const draft = JSON.parse(saved);
-        setDrafts(draft.items || []);
-        key.current = draft.key || "";
-        setPublishLocked(Boolean(draft.locked));
-      }
+      draft = JSON.parse(
+        localStorage.getItem(`snap-draft-v2:${store.id}`) || "null",
+      );
     } catch {}
+    setDrafts(draft?.items || []);
+    key.current = draft?.key || "";
+    setPublishLocked(Boolean(draft?.locked));
     setRestoredStore(store.id);
   }, [store?.id]);
   useEffect(() => {
@@ -95,14 +102,75 @@ export default function Studio() {
     if (!store) throw new Error("Sign in to manage your store.");
     return store;
   }
+  function openSession(session: SellerStores) {
+    let saved = "";
+    try {
+      saved = localStorage.getItem(activeStoreKey) || "";
+    } catch {}
+    setStores(session.stores);
+    selectStore(session.stores.find((s) => s.id === saved) || session.store);
+  }
+  function selectStore(next: Store) {
+    setStore(next);
+    setName(next.name);
+    setUrl("");
+    setComparisons(null);
+    setDeleteName(null);
+    try {
+      localStorage.setItem(activeStoreKey, next.id);
+    } catch {}
+  }
+  async function loadStores() {
+    try {
+      setStores((await api<{ stores: StoreSummary[] }>("/stores")).stores);
+    } catch {}
+  }
+  function openStore() {
+    void work("Opening a new storefront", async () => {
+      // One key per intended storefront, so a retried request cannot create a duplicate.
+      storeKey.current ||= await newRequestKey();
+      const result = await api<SellerStores>("/stores", {
+        method: "POST",
+        body: JSON.stringify({
+          name: newStoreName,
+          requestKey: storeKey.current,
+        }),
+      });
+      storeKey.current = "";
+      setNewStoreName(null);
+      setStores(result.stores);
+      selectStore(result.store);
+    });
+  }
+  function deleteStore() {
+    void work("Deleting this storefront", async () => {
+      const s = await ensureStore();
+      let result: SellerStores;
+      try {
+        result = await api<SellerStores>(`/stores/${s.id}`, {
+          method: "DELETE",
+          body: JSON.stringify({ name: deleteName }),
+        });
+      } catch (e) {
+        // A retry after a lost response finds the storefront already gone.
+        if ((e as { status?: number }).status !== 404) throw e;
+        result = await api<SellerStores>("/auth/session");
+      }
+      try {
+        localStorage.removeItem(`snap-draft-v2:${s.id}`);
+      } catch {}
+      setStores(result.stores);
+      selectStore(result.store);
+    });
+  }
   async function signIn() {
     await work("Signing in", async () => {
-      const result = await api<{ store: Store }>("/auth/login", {
+      const { store } = await api<{ store: Store }>("/auth/login", {
         method: "POST",
         body: JSON.stringify({ email, password }),
       });
-      setStore(result.store);
-      setName(result.store.name);
+      const { stores } = await api<{ stores: StoreSummary[] }>("/stores");
+      openSession({ store, stores });
       setPassword("");
     });
   }
@@ -110,6 +178,8 @@ export default function Studio() {
     await work("Signing out", async () => {
       await api("/auth/logout", { method: "POST", body: "{}" });
       setStore(null);
+      setStores([]);
+      setNewStoreName(null);
       setDrafts([]);
       setUrl("");
     });
@@ -162,6 +232,7 @@ export default function Studio() {
         setUrl(r.url);
         setDrafts([]);
         setPublishLocked(false);
+        void loadStores();
       } catch (e) {
         if (
           [400, 401, 403, 503].includes((e as { status?: number }).status || 0)
@@ -265,7 +336,7 @@ export default function Studio() {
           <h2>{name}</h2>
           <div className="side-nav">
             <span className="active">
-              <ScanLine size={19} /> Create a store
+              <ScanLine size={19} /> Add finds
             </span>
             <a href={store ? `/s/${store.id}` : "#start"}>
               <QrCode size={19} /> Storefront <ExternalLink size={14} />
@@ -284,13 +355,101 @@ export default function Studio() {
           </div>
         </aside>
         <section className="studio-main" id="start">
+          <nav className="store-switcher" aria-label="Your storefronts">
+            <span className="eyebrow">YOUR STOREFRONTS</span>
+            <div className="store-chips">
+              {stores.map((s) => (
+                <button
+                  key={s.id}
+                  className={
+                    s.id === store.id ? "store-chip active" : "store-chip"
+                  }
+                  aria-current={s.id === store.id ? "true" : undefined}
+                  disabled={!!busy}
+                  onClick={() => {
+                    if (s.id === store.id) return;
+                    selectStore(s);
+                    void loadStores();
+                  }}
+                >
+                  <span className="chip-monogram">{s.name.slice(0, 1)}</span>
+                  <span>
+                    {s.name}
+                    <small>
+                      {s.closing
+                        ? "Deletion unfinished"
+                        : s.listed
+                          ? s.available
+                            ? `${s.available} available`
+                            : "Sold out"
+                          : "No finds yet"}
+                    </small>
+                  </span>
+                </button>
+              ))}
+              {newStoreName === null ? (
+                <button
+                  className="store-chip add"
+                  disabled={!!busy}
+                  onClick={() => setNewStoreName("")}
+                >
+                  <Plus size={15} /> New storefront
+                </button>
+              ) : (
+                <form
+                  className="new-store"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    openStore();
+                  }}
+                >
+                  <label className="sr-only" htmlFor="new-store-name">
+                    New storefront name
+                  </label>
+                  <input
+                    id="new-store-name"
+                    autoFocus
+                    required
+                    maxLength={60}
+                    placeholder="Name your storefront"
+                    value={newStoreName}
+                    onChange={(e) => {
+                      setNewStoreName(e.target.value);
+                      storeKey.current = "";
+                    }}
+                  />
+                  <button
+                    className="button primary"
+                    disabled={!!busy || newStoreName.trim().length < 2}
+                  >
+                    Open storefront
+                  </button>
+                  <button
+                    type="button"
+                    className="text-link"
+                    disabled={!!busy}
+                    onClick={() => setNewStoreName(null)}
+                  >
+                    Cancel
+                  </button>
+                </form>
+              )}
+            </div>
+          </nav>
           {store.paymentProvider === "square_oauth" && (
             <PaymentSetup
+              key={store.id}
               store={store}
               onSaved={() => {
-                void api<{ store: Store }>("/auth/session").then((r) =>
-                  setStore(r.store),
-                );
+                const id = store.id;
+                void api<StoreSnapshot>(`/stores/${id}`)
+                  .then((r) =>
+                    setStore((current) =>
+                      current?.id === id ? r.store : current,
+                    ),
+                  )
+                  .catch(() => {});
+                void loadStores();
               }}
             />
           )}
@@ -584,6 +743,68 @@ export default function Studio() {
                   <Plus size={17} /> Stock updates as things sell
                 </span>
               </div>
+              <section
+                className="danger-zone"
+                aria-labelledby="delete-store-title"
+              >
+                <div>
+                  <h3 id="delete-store-title">Delete this storefront</h3>
+                  <p>
+                    Permanently removes {store.name}: its link and QR code,
+                    every listing and photo, its items in your Square catalog,
+                    and this app’s record of its sales. Payments and receipts
+                    stay in your Square account.
+                    {stores.length < 2 &&
+                      " Because it is your only storefront, a new empty one opens in its place."}
+                  </p>
+                </div>
+                {deleteName === null ? (
+                  <button
+                    className="button danger"
+                    disabled={!!busy}
+                    onClick={() => setDeleteName("")}
+                  >
+                    <Trash2 size={17} />
+                    {store.closing ? "Finish deleting" : "Delete storefront"}
+                  </button>
+                ) : (
+                  <form
+                    className="delete-confirm"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      deleteStore();
+                    }}
+                  >
+                    <label htmlFor="delete-store-name">
+                      Type <b>{store.name}</b> to confirm
+                    </label>
+                    <input
+                      id="delete-store-name"
+                      autoFocus
+                      autoComplete="off"
+                      maxLength={60}
+                      value={deleteName}
+                      onChange={(e) => setDeleteName(e.target.value)}
+                    />
+                    <div>
+                      <button
+                        className="button danger"
+                        disabled={!!busy || deleteName.trim() !== store.name}
+                      >
+                        <Trash2 size={17} /> Delete forever
+                      </button>
+                      <button
+                        type="button"
+                        className="text-link"
+                        disabled={!!busy}
+                        onClick={() => setDeleteName(null)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </section>
             </>
           )}
         </section>

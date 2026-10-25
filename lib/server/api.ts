@@ -4,6 +4,8 @@ import QRCode from "qrcode";
 import { repo } from "../repo";
 import {
   CheckoutRequest,
+  CreateStoreRequest,
+  DeleteStoreRequest,
   PublishRequest,
   type Integration,
   StoreBusiness,
@@ -42,6 +44,7 @@ import { AppError, requireConfig } from "./errors";
 import { prepareImage, scanPhoto } from "../providers/vision";
 import {
   createCatalog,
+  deleteCatalog,
   createPaymentLink,
   square,
   verifySquareSignature,
@@ -117,6 +120,42 @@ function token(req: Request) {
 function auth(req: Request, id: string) {
   repo.authorize(id, token(req));
   assertStoreEnvironment(repo.store(id)!);
+}
+// The password seller's primary storefront for the configured Square location, created on demand.
+function passwordScope() {
+  const mode = paymentEnvironment();
+  const environment = `${mode}:${requireConfig("SQUARE_LOCATION_ID")}`;
+  const store = repo.primaryStore(
+    environment,
+    process.env.BUSINESS_NAME || "My store",
+    mode,
+  );
+  return { mode, environment, store };
+}
+// The signed-in account's storefronts. Each account only ever sees its own scope.
+function sellerStores(req: Request) {
+  const account = repo.account(token(req));
+  if (account.google) {
+    assertStoreEnvironment(account.store);
+    if (!account.scope) throw new AppError(403, "Sign in again to continue.");
+    return {
+      mode: account.store.paymentMode,
+      environment: account.scope,
+      store: account.store,
+      provider: "square_oauth" as const,
+      fallbackName: "My store",
+      stores: repo.sellerStores(account.scope),
+    };
+  }
+  const { mode, environment, store } = passwordScope();
+  return {
+    mode,
+    environment,
+    store,
+    provider: "platform" as const,
+    fallbackName: process.env.BUSINESS_NAME || "My store",
+    stores: repo.sellerStores(environment),
+  };
 }
 async function bytes(req: Request, max = 100_000) {
   if (Number(req.headers.get("content-length") || 0) > max)
@@ -226,22 +265,17 @@ async function route(req: Request): Promise<Response> {
       .parse(await body(req));
     repo.limit(`login:${data.email.toLowerCase()}`, 10, 15 * 60_000);
     await verifyLogin(data.email, data.password);
-    const location = requireConfig("SQUARE_LOCATION_ID");
-    const environment = paymentEnvironment();
-    const store = repo.primaryStore(
-      `${environment}:${location}`,
-      process.env.BUSINESS_NAME || "My store",
-      environment,
-    );
+    const { store } = passwordScope();
     const ownerToken = repo.createSession(store.id);
+    // Unchanged shape: older app builds save this whole response in SecureStore.
+    // Clients fetch the storefront list from /stores.
     const response = json({ store, token: ownerToken });
     response.headers.set("Set-Cookie", sessionCookie(ownerToken));
     return response;
   }
   if (p[0] === "auth" && p[1] === "session" && method === "GET") {
-    const store = repo.session(token(req));
-    assertStoreEnvironment(store);
-    return json({ store });
+    const { store, stores } = sellerStores(req);
+    return json({ store, stores });
   }
   if (p[0] === "auth" && p[1] === "logout" && method === "POST") {
     repo.revokeSession(token(req));
@@ -261,6 +295,25 @@ async function route(req: Request): Promise<Response> {
     )
       throw new AppError(401, "Unauthorized.");
     return json(await maintenance());
+  }
+  if (p[0] === "stores" && p.length === 1) {
+    if (method === "GET") return json({ stores: sellerStores(req).stores });
+    if (method === "POST") {
+      // Storefronts are added to the signed-in account only.
+      const seller = sellerStores(req);
+      const data = CreateStoreRequest.parse(await body(req));
+      // A Google seller's new storefront keeps their business details; it connects
+      // its own Square account and location like their first one.
+      const store = repo.addStore(
+        seller.environment,
+        data.name,
+        seller.mode,
+        data.requestKey,
+        seller.provider,
+        seller.store.business,
+      );
+      return json({ store, stores: repo.sellerStores(seller.environment) });
+    }
   }
   if (p[0] === "stores" && p[1]) {
     const id = p[1];
@@ -315,6 +368,26 @@ async function route(req: Request): Promise<Response> {
       await syncInventory();
       return json(repo.snapshot(id));
     }
+    if (method === "DELETE" && p.length === 2) {
+      auth(req, id);
+      const { name } = DeleteStoreRequest.parse(await body(req));
+      if (name !== currentStore.name)
+        throw new AppError(
+          400,
+          "Type the storefront's name exactly as shown to delete it.",
+        );
+      // Close first so no checkout or publish starts while Square catalog items are removed.
+      // If Square fails, the storefront stays closed and the seller retries the delete.
+      const { catalogIds, publishing } = repo.closeStore(id);
+      for (const pending of publishing)
+        for (const item of await createCatalog(pending.items, pending.key))
+          catalogIds.push(item.catalogId);
+      await deleteCatalog(catalogIds, id);
+      repo.deleteStore(id, sellerStores(req).fallbackName);
+      await syncInventory();
+      const { store, stores } = sellerStores(req);
+      return json({ deleted: id, store, stores });
+    }
     if (method === "GET" && p[2] === "qr") {
       repo.snapshot(id);
       return new Response(
@@ -343,6 +416,8 @@ async function route(req: Request): Promise<Response> {
           headers: { "Content-Type": "audio/wav", "Cache-Control": "no-store" },
         });
       rateLimit(`audio:${id}`, 5);
+      // Deployment-wide ceiling so more storefronts do not multiply Cartesia spend.
+      rateLimit("audio", 10);
       const data = await speak(
         narration(snap, language).slice(0, 5000),
         language,
@@ -359,7 +434,8 @@ async function route(req: Request): Promise<Response> {
     // Authenticate before buffering a large upload or making a paid model request.
     const id = url.searchParams.get("storeId") || "";
     auth(req, id);
-    rateLimit(`scan:${id}`, 6);
+    // Provider limits apply to the seller, not each storefront.
+    rateLimit("seller:scan", 6);
     const raw = await bytes(req, 10 * 1024 * 1024 + 8192);
     let form: FormData;
     try {
@@ -410,7 +486,7 @@ async function route(req: Request): Promise<Response> {
       .object({ storeId: z.string(), name: z.string().trim().min(2).max(100) })
       .parse(await body(req));
     auth(req, data.storeId);
-    rateLimit(`compare:${data.storeId}`, 8);
+    rateLimit("seller:compare", 8);
     return json(await comparePrices(data.name));
   }
   if (method === "POST" && p[0] === "publish") {
@@ -616,7 +692,7 @@ export async function handle(req: Request) {
     );
     response.headers.set(
       "Access-Control-Allow-Methods",
-      "GET, POST, PATCH, OPTIONS",
+      "GET, POST, PATCH, DELETE, OPTIONS",
     );
   }
   response.headers.set("X-Content-Type-Options", "nosniff");

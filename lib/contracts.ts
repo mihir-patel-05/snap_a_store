@@ -47,6 +47,8 @@ export type Store = {
   paymentProvider?: "platform" | "square_oauth";
   merchantId?: string;
   business?: StoreBusiness;
+  // Set while the seller deletes this storefront; checkouts and publishing stop.
+  closing?: boolean;
 };
 export const StoreBusiness = z.object({
   email: z.string().email().max(254),
@@ -65,6 +67,15 @@ export type PaymentConnection = {
   locations: { id: string; name: string }[];
   business?: StoreBusiness;
 };
+export type StoreSummary = Store & { listed: number; available: number };
+export const CreateStoreRequest = z.object({
+  name: z.string().trim().min(2).max(60),
+  requestKey: z.string().uuid(),
+});
+// The seller retypes the storefront's name to confirm a permanent delete.
+export const DeleteStoreRequest = z.object({
+  name: z.string().trim().min(1).max(60),
+});
 export type StoreSnapshot = {
   store: Store;
   items: Item[];

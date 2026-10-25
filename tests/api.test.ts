@@ -38,7 +38,7 @@ beforeEach(() => {
   }))
     vi.stubEnv(k, v);
   repo.db.exec(
-    "DELETE FROM limits; DELETE FROM jobs; DELETE FROM sessions; DELETE FROM primary_stores; DELETE FROM outbox; DELETE FROM activity; DELETE FROM publishes; DELETE FROM photos; DELETE FROM orders; DELETE FROM items; DELETE FROM stores;",
+    "DELETE FROM limits; DELETE FROM jobs; DELETE FROM sessions; DELETE FROM primary_stores; DELETE FROM outbox; DELETE FROM activity; DELETE FROM publishes; DELETE FROM photos; DELETE FROM orders; DELETE FROM items; DELETE FROM seller_stores; DELETE FROM convex_removals; DELETE FROM stores;",
   );
 });
 afterAll(() => {
@@ -132,7 +132,14 @@ describe("production HTTP boundaries", () => {
     ).toBe(403);
   });
   it("removes public seller creation and sample endpoints", async () => {
-    expect((await call("/stores", { name: "Nope" })).status).toBe(404);
+    expect(
+      (await call("/stores", { name: "Nope", requestKey: randomUUID() }))
+        .status,
+    ).toBe(401);
+    expect((await call("/stores")).status).toBe(401);
+    expect(repo.db.prepare("SELECT COUNT(*) AS n FROM stores").get()).toEqual({
+      n: 0,
+    });
     expect((await call("/sample", {})).status).toBe(404);
     const { order } = reserve();
     expect((await call(`/orders/${order.id}/demo-complete`, {})).status).toBe(
@@ -456,5 +463,377 @@ describe("production HTTP boundaries", () => {
   it("protects background maintenance with its own secret", async () => {
     expect((await call("/maintenance", {})).status).toBe(401);
     expect((await call("/maintenance", {}, "wrong")).status).toBe(401);
+  });
+});
+describe("multiple storefronts", () => {
+  async function login() {
+    return (
+      await call("/auth/login", {
+        email: "seller@example.com",
+        password: "long-test-password",
+      })
+    ).json();
+  }
+  async function open(token: string, name: string, requestKey = randomUUID()) {
+    return call("/stores", { name, requestKey }, token);
+  }
+  async function remove(token: string | undefined, id: string, name: string) {
+    return handle(
+      new Request(`${url}/api/stores/${id}`, {
+        method: "DELETE",
+        headers: token ? { authorization: `Bearer ${token}` } : {},
+        body: JSON.stringify({ name }),
+      }),
+    );
+  }
+  function publishTo(storeId: string, catalogId = `cat-${randomUUID()}`) {
+    const key = randomUUID();
+    const batch = repo.beginPublish(storeId, key, [fixtureItems[1]]);
+    repo.finishPublish(
+      storeId,
+      key,
+      batch.items.map((i) => ({
+        ...i,
+        catalogId,
+        variationId: `var-${catalogId}`,
+      })),
+    );
+    return { ...batch.items[0], catalogId };
+  }
+  const rows = (table: string, storeId: string) =>
+    (
+      repo.db
+        .prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE store_id=?`)
+        .get(storeId) as { n: number }
+    ).n;
+  it("lets one seller sign-in open, list, and manage several storefronts", async () => {
+    const session = await login();
+    // Older app builds save the whole login response in SecureStore; keep it small.
+    expect(Object.keys(session).sort()).toEqual(["store", "token"]);
+    const initial = await (
+      await call("/stores", undefined, session.token)
+    ).json();
+    expect(initial.stores.map((s: { id: string }) => s.id)).toEqual([
+      session.store.id,
+    ]);
+    const response = await open(session.token, "Garage sale");
+    expect(response.status).toBe(200);
+    const { store, stores } = await response.json();
+    expect(store).toMatchObject({
+      name: "Garage sale",
+      paymentMode: "production",
+    });
+    expect(stores.map((s: { id: string }) => s.id)).toEqual([
+      session.store.id,
+      store.id,
+    ]);
+    expect(stores[1]).toMatchObject({ listed: 0, available: 0 });
+    const listed = await (
+      await call("/stores", undefined, session.token)
+    ).json();
+    expect(listed.stores).toHaveLength(2);
+    const restored = await (
+      await call("/auth/session", undefined, session.token)
+    ).json();
+    expect(restored.store.id).toBe(session.store.id);
+    expect(restored.stores).toHaveLength(2);
+    const renamed = await handle(
+      new Request(`${url}/api/stores/${store.id}`, {
+        method: "PATCH",
+        headers: { authorization: `Bearer ${session.token}` },
+        body: JSON.stringify({ name: "Spring garage sale" }),
+      }),
+    );
+    expect(renamed.status).toBe(200);
+    expect(repo.store(store.id)?.name).toBe("Spring garage sale");
+    expect(repo.store(session.store.id)?.name).toBe("Real store");
+    expect(
+      (
+        await call(
+          `/scan?storeId=${store.id}`,
+          { photo: "fake" },
+          session.token,
+        )
+      ).status,
+    ).toBe(400);
+  });
+  it("creates each storefront once per request key and caps the total", async () => {
+    const { token } = await login();
+    const requestKey = randomUUID();
+    const first = await (await open(token, "Book table", requestKey)).json();
+    const retry = await (await open(token, "Book table", requestKey)).json();
+    expect(retry.store.id).toBe(first.store.id);
+    expect(retry.stores).toHaveLength(2);
+    expect((await open(token, "x")).status).toBe(400);
+    expect(
+      (await call("/stores", { name: "No key", requestKey: "1" }, token))
+        .status,
+    ).toBe(400);
+    for (let n = 3; n <= 20; n++)
+      expect((await open(token, `Table ${n}`)).status).toBe(200);
+    const over = await open(token, "One too many");
+    expect(over.status).toBe(409);
+    expect((await over.json()).error).toContain("up to 20 storefronts");
+  });
+  it("keeps inventory, checkout, and stats separate per storefront", async () => {
+    const session = await login();
+    const second = (await (await open(session.token, "Second")).json()).store;
+    const publish = (storeId: string, item = fixtureItems[1]) => {
+      const key = randomUUID();
+      const batch = repo.beginPublish(storeId, key, [item]);
+      repo.finishPublish(storeId, key, batch.items);
+      return batch.items[0];
+    };
+    const lamp = publish(session.store.id);
+    const sameDraftElsewhere = publish(second.id);
+    expect(sameDraftElsewhere.id).not.toBe(lamp.id);
+    expect(repo.snapshot(session.store.id).items.map((i) => i.id)).toEqual([
+      lamp.id,
+    ]);
+    expect(() =>
+      repo.reserve(second.id, randomUUID(), [{ itemId: lamp.id, quantity: 1 }]),
+    ).toThrow("no longer available");
+    const order = repo.reserve(second.id, randomUUID(), [
+      { itemId: sameDraftElsewhere.id, quantity: 1 },
+    ]);
+    repo.complete(order.id, "pay-second", order.totalCents);
+    expect(repo.snapshot(second.id).stats.sold).toBe(1);
+    expect(repo.snapshot(session.store.id).stats.sold).toBe(0);
+    const { stores } = await (
+      await call("/stores", undefined, session.token)
+    ).json();
+    expect(stores).toMatchObject([
+      { id: session.store.id, listed: 1, available: 1 },
+      { id: second.id, listed: 1, available: 0 },
+    ]);
+  });
+  it("applies the paid scan limit to the seller, not each storefront", async () => {
+    const session = await login();
+    const second = (await (await open(session.token, "Second")).json()).store;
+    for (let n = 0; n < 6; n++)
+      expect(
+        (
+          await call(
+            `/scan?storeId=${n % 2 ? second.id : session.store.id}`,
+            { photo: "fake" },
+            session.token,
+          )
+        ).status,
+      ).toBe(400);
+    expect(
+      (
+        await call(
+          `/scan?storeId=${second.id}`,
+          { photo: "fake" },
+          session.token,
+        )
+      ).status,
+    ).toBe(429);
+  });
+  it("deletes a storefront completely, including its Square catalog items", async () => {
+    const session = await login();
+    const second = (await (await open(session.token, "Garage sale")).json())
+      .store;
+    const item = publishTo(second.id);
+    const kept = publishTo(session.store.id);
+    const photo = repo.savePhoto(second.id, Buffer.from("photo"));
+    const sale = repo.reserve(second.id, randomUUID(), [
+      { itemId: item.id, quantity: 1 },
+    ]);
+    repo.complete(sale.id, "pay-old", sale.totalCents);
+    const fetch = vi
+      .fn()
+      .mockResolvedValue(Response.json({ deleted_object_ids: [] }));
+    vi.stubGlobal("fetch", fetch);
+    expect((await remove(undefined, second.id, "Garage sale")).status).toBe(
+      401,
+    );
+    const wrong = await remove(session.token, second.id, "garage sale");
+    expect(wrong.status).toBe(400);
+    expect(repo.store(second.id)?.closing).toBeUndefined();
+    expect(fetch).not.toHaveBeenCalled();
+    const response = await remove(session.token, second.id, "Garage sale");
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result.deleted).toBe(second.id);
+    expect(result.store.id).toBe(session.store.id);
+    expect(result.stores.map((s: { id: string }) => s.id)).toEqual([
+      session.store.id,
+    ]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(String(fetch.mock.calls[0][0])).toContain(
+      "/v2/catalog/batch-delete",
+    );
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+      object_ids: [item.catalogId],
+    });
+    expect(repo.store(second.id)).toBeUndefined();
+    for (const table of [
+      "items",
+      "orders",
+      "photos",
+      "activity",
+      "publishes",
+      "outbox",
+      "seller_stores",
+    ])
+      expect(rows(table, second.id)).toBe(0);
+    expect(repo.convexRemovals()).toEqual([second.id]);
+    expect((await call(`/stores/${second.id}`)).status).toBe(404);
+    expect(
+      (await call(`/photos/${photo}`, undefined, session.token)).status,
+    ).toBe(404);
+    expect((await call(`/orders/${sale.id}`)).status).toBe(404);
+    expect(
+      (
+        await call("/checkout", {
+          storeId: second.id,
+          requestKey: randomUUID(),
+          lines: [{ itemId: item.id, quantity: 1 }],
+        })
+      ).status,
+    ).toBe(404);
+    // The other storefront is untouched.
+    expect(repo.snapshot(session.store.id).items.map((i) => i.id)).toEqual([
+      kept.id,
+    ]);
+    expect((await remove(session.token, second.id, "Garage sale")).status).toBe(
+      404,
+    );
+  });
+  it("refuses to delete a storefront while a buyer's checkout is open", async () => {
+    const session = await login();
+    const second = (await (await open(session.token, "Busy table")).json())
+      .store;
+    const item = publishTo(second.id);
+    const order = repo.reserve(second.id, randomUUID(), [
+      { itemId: item.id, quantity: 1 },
+    ]);
+    const fetch = vi.fn().mockResolvedValue(Response.json({}));
+    vi.stubGlobal("fetch", fetch);
+    const blocked = await remove(session.token, second.id, "Busy table");
+    expect(blocked.status).toBe(409);
+    expect((await blocked.json()).error).toContain("checkout open");
+    expect(fetch).not.toHaveBeenCalled();
+    expect(repo.store(second.id)?.closing).toBeUndefined();
+    expect(repo.snapshot(second.id).items[0].available).toBe(0);
+    repo.cancelOrder(order.id);
+    expect((await remove(session.token, second.id, "Busy table")).status).toBe(
+      200,
+    );
+  });
+  it("keeps a storefront closed to buyers and retryable when Square deletion fails", async () => {
+    const session = await login();
+    const second = (await (await open(session.token, "Flaky")).json()).store;
+    const item = publishTo(second.id);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(Response.json({}, { status: 500 })),
+    );
+    expect((await remove(session.token, second.id, "Flaky")).status).toBe(502);
+    expect(repo.store(second.id)?.closing).toBe(true);
+    expect(rows("items", second.id)).toBe(1);
+    expect(
+      (
+        await call("/checkout", {
+          storeId: second.id,
+          requestKey: randomUUID(),
+          lines: [{ itemId: item.id, quantity: 1 }],
+        })
+      ).status,
+    ).toBe(409);
+    expect(() =>
+      repo.beginPublish(second.id, randomUUID(), [fixtureItems[0]]),
+    ).toThrow("being deleted");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(Response.json({ deleted_object_ids: [] })),
+    );
+    expect((await remove(session.token, second.id, "Flaky")).status).toBe(200);
+    expect(repo.store(second.id)).toBeUndefined();
+  });
+  it("replays an unfinished publish so its Square items are deleted too", async () => {
+    const session = await login();
+    const second = (await (await open(session.token, "Half done")).json())
+      .store;
+    const key = randomUUID();
+    repo.beginPublish(second.id, key, [fixtureItems[1]]);
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          id_mappings: [
+            { client_object_id: "#item-0", object_id: "orphan-item" },
+            { client_object_id: "#variation-0", object_id: "orphan-var" },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(Response.json({ deleted_object_ids: [] }));
+    vi.stubGlobal("fetch", fetch);
+    expect((await remove(session.token, second.id, "Half done")).status).toBe(
+      200,
+    );
+    expect(String(fetch.mock.calls[0][0])).toContain("/catalog/batch-upsert");
+    expect(JSON.parse(fetch.mock.calls[0][1].body).idempotency_key).toBe(key);
+    expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({
+      object_ids: ["orphan-item"],
+    });
+  });
+  it("promotes another storefront when the primary one is deleted", async () => {
+    const session = await login();
+    const second = (await (await open(session.token, "Second")).json()).store;
+    const response = await remove(
+      session.token,
+      session.store.id,
+      "Real store",
+    );
+    expect(response.status).toBe(200);
+    expect((await response.json()).store.id).toBe(second.id);
+    const restored = await (
+      await call("/auth/session", undefined, session.token)
+    ).json();
+    expect(restored.store.id).toBe(second.id);
+    expect(restored.stores).toHaveLength(1);
+    // Sessions keep pointing at a real storefront for rollback compatibility.
+    expect(
+      repo.db.prepare("SELECT DISTINCT store_id FROM sessions").all(),
+    ).toEqual([{ store_id: second.id }]);
+    const again = await (await login()).store;
+    expect(again.id).toBe(second.id);
+  });
+  it("opens a fresh empty storefront when the only one is deleted", async () => {
+    const session = await login();
+    publishTo(session.store.id);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(Response.json({ deleted_object_ids: [] })),
+    );
+    const response = await remove(
+      session.token,
+      session.store.id,
+      "Real store",
+    );
+    expect(response.status).toBe(200);
+    const { store, stores } = await response.json();
+    expect(store.id).not.toBe(session.store.id);
+    expect(store).toMatchObject({ name: "Real store", revision: 0 });
+    expect(stores).toMatchObject([{ id: store.id, listed: 0 }]);
+    expect((await call("/stores", undefined, session.token)).status).toBe(200);
+    expect(repo.store(session.store.id)).toBeUndefined();
+  });
+  it("scopes storefronts to the configured Square location", async () => {
+    const session = await login();
+    const second = (await (await open(session.token, "Second")).json()).store;
+    vi.stubEnv("SQUARE_LOCATION_ID", "new-location");
+    const moved = await (
+      await call("/auth/session", undefined, session.token)
+    ).json();
+    expect(moved.store.id).not.toBe(session.store.id);
+    expect(moved.stores.map((s: { id: string }) => s.id)).toEqual([
+      moved.store.id,
+    ]);
+    expect(
+      (await call(`/stores/${second.id}`, undefined, session.token)).status,
+    ).toBe(410);
   });
 });
