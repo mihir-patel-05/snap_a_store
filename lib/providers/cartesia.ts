@@ -18,7 +18,7 @@ export async function speak(transcript: string, language: "en" | "es") {
     body: JSON.stringify({
       model_id: process.env.CARTESIA_MODEL || "sonic-3.6",
       transcript,
-      voice: requireConfig("CARTESIA_VOICE_ID"),
+      voice: { mode: "id", id: requireConfig("CARTESIA_VOICE_ID") },
       language,
       output_format: {
         container: "wav",
@@ -28,10 +28,14 @@ export async function speak(transcript: string, language: "en" | "es") {
     }),
     signal: AbortSignal.timeout(30000),
   });
-  if (!response.ok)
+  if (!response.ok) {
+    // Keep Cartesia's reason in server logs; buyers only see the generic message.
+    const detail = (await response.text().catch(() => "")).slice(0, 500);
+    console.error("Cartesia TTS failed", response.status, detail);
     throw new AppError(
       502,
       "Audio is temporarily unavailable. All product details are still on screen.",
     );
+  }
   return response.arrayBuffer();
 }
