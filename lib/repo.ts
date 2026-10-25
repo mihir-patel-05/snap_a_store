@@ -41,6 +41,7 @@ export function createRepo(
     CREATE TABLE IF NOT EXISTS activity (id TEXT PRIMARY KEY, store_id TEXT NOT NULL, message TEXT NOT NULL, at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS outbox (store_id TEXT PRIMARY KEY, revision INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS seller_stores (store_id TEXT PRIMARY KEY REFERENCES stores(id), environment TEXT NOT NULL, request_key TEXT UNIQUE, created_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS convex_removals (store_id TEXT PRIMARY KEY);
     CREATE INDEX IF NOT EXISTS items_store ON items(store_id);
     CREATE INDEX IF NOT EXISTS orders_store ON orders(store_id);
     CREATE INDEX IF NOT EXISTS seller_stores_environment ON seller_stores(environment, created_at);
@@ -78,6 +79,13 @@ export function createRepo(
       JSON.stringify(order),
     );
   }
+  const openOrders = (id: string) =>
+    orders(id).some((o) => o.state === "creating" || o.state === "pending");
+  const checkoutOpen = () =>
+    new AppError(
+      409,
+      "A buyer has a checkout open in this storefront. Try again once it is paid or expires (within about 30 minutes).",
+    );
   function touch(id: string, message?: string) {
     const s = store(id)!;
     s.revision++;
@@ -214,11 +222,81 @@ export function createRepo(
         if (count >= MAX_STORES)
           throw new AppError(
             409,
-            `You can run up to ${MAX_STORES} storefronts. Rename one you no longer use.`,
+            `You can run up to ${MAX_STORES} storefronts. Delete or rename one you no longer use.`,
           );
         return createStore(name, mode, requestKey).store;
       },
     ),
+    // Stops new checkouts and publishing, then returns what Square must delete.
+    closeStore: db.transaction((id: string) => {
+      const s = store(id);
+      if (!s) throw new AppError(404, "Store not found.");
+      if (openOrders(id)) throw checkoutOpen();
+      if (!s.closing) {
+        s.closing = true;
+        db.prepare("UPDATE stores SET data=? WHERE id=?").run(
+          JSON.stringify(s),
+          id,
+        );
+        touch(id);
+      }
+      return {
+        catalogIds: items(id).flatMap((i) =>
+          i.catalogId ? [i.catalogId] : [],
+        ),
+        // A publish with an uncertain result may have created Square items.
+        publishing: (
+          db
+            .prepare(
+              "SELECT id,items FROM publishes WHERE store_id=? AND state='creating'",
+            )
+            .all(id) as { id: string; items: string }[]
+        ).map((p) => ({ key: p.id, items: JSON.parse(p.items) as Item[] })),
+      };
+    }),
+    // Permanently removes a closed storefront and everything this app stored for it.
+    // The oldest remaining storefront becomes primary; if none remain, a new empty one opens.
+    deleteStore: db.transaction((id: string, fallbackName: string) => {
+      const s = store(id);
+      if (!s) throw new AppError(404, "Store not found.");
+      if (!s.closing)
+        throw new AppError(409, "Close this storefront before deleting it.");
+      if (openOrders(id)) throw checkoutOpen();
+      const { environment } = db
+        .prepare("SELECT environment FROM seller_stores WHERE store_id=?")
+        .get(id) as { environment: string };
+      for (const table of [
+        "orders",
+        "items",
+        "publishes",
+        "photos",
+        "activity",
+        "outbox",
+        "seller_stores",
+      ])
+        db.prepare(`DELETE FROM ${table} WHERE store_id=?`).run(id);
+      const remaining = db
+        .prepare(
+          "SELECT store_id FROM seller_stores WHERE environment=? ORDER BY created_at, rowid LIMIT 1",
+        )
+        .get(environment) as { store_id: string } | undefined;
+      const next =
+        remaining?.store_id ??
+        createStore(fallbackName, s.paymentMode).store.id;
+      const primary = db
+        .prepare("SELECT store_id FROM primary_stores WHERE environment=?")
+        .get(environment) as { store_id: string } | undefined;
+      if (!primary || primary.store_id === id)
+        db.prepare(
+          "INSERT INTO primary_stores VALUES(?,?) ON CONFLICT(environment) DO UPDATE SET store_id=excluded.store_id",
+        ).run(environment, next);
+      db.prepare("UPDATE sessions SET store_id=? WHERE store_id=?").run(
+        next,
+        id,
+      );
+      db.prepare("DELETE FROM stores WHERE id=?").run(id);
+      db.prepare("INSERT OR IGNORE INTO convex_removals VALUES(?)").run(id);
+    }),
     primaryStore(
       environment: string,
       name: string,
@@ -303,6 +381,7 @@ export function createRepo(
       touch(id);
     }),
     savePhoto(id: string, bytes: Buffer) {
+      if (!store(id)) throw new AppError(404, "Store not found.");
       const photoId = randomUUID();
       db.prepare("INSERT INTO photos VALUES(?,?,?)").run(photoId, id, bytes);
       return photoId;
@@ -320,6 +399,8 @@ export function createRepo(
     },
     beginPublish: db.transaction(
       (id: string, key: string, drafts: DraftItem[]) => {
+        if (store(id)?.closing)
+          throw new AppError(409, "This storefront is being deleted.");
         const fp = hash(JSON.stringify(drafts));
         const old = db
           .prepare("SELECT * FROM publishes WHERE id=?")
@@ -394,7 +475,8 @@ export function createRepo(
     finishPublish: db.transaction((id: string, key: string, made: Item[]) => {
       const row = db
         .prepare("SELECT state FROM publishes WHERE id=? AND store_id=?")
-        .get(key, id) as { state: string };
+        .get(key, id) as { state: string } | undefined;
+      if (!row) throw new AppError(404, "This storefront was deleted.");
       if (row.state === "done") return;
       for (const item of made)
         db.prepare("INSERT INTO items VALUES(?,?,?)").run(
@@ -432,6 +514,11 @@ export function createRepo(
           return existing;
         }
         const snap = snapshot(id);
+        if (snap.store.closing)
+          throw new AppError(
+            409,
+            "This storefront is closing and no longer takes orders.",
+          );
         const details = lines.map((l) => {
           const item = snap.items.find((i) => i.id === l.itemId);
           if (!item || item.available < l.quantity)
@@ -563,6 +650,16 @@ export function createRepo(
         id,
         revision,
       );
+    },
+    convexRemovals() {
+      return (
+        db.prepare("SELECT store_id FROM convex_removals LIMIT 20").all() as {
+          store_id: string;
+        }[]
+      ).map((r) => r.store_id);
+    },
+    convexRemoved(id: string) {
+      db.prepare("DELETE FROM convex_removals WHERE store_id=?").run(id);
     },
     close() {
       db.close();

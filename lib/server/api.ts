@@ -5,6 +5,7 @@ import { repo } from "../repo";
 import {
   CheckoutRequest,
   CreateStoreRequest,
+  DeleteStoreRequest,
   PublishRequest,
   type Integration,
 } from "../contracts";
@@ -26,6 +27,7 @@ import { AppError, requireConfig } from "./errors";
 import { prepareImage, scanPhoto } from "../providers/vision";
 import {
   createCatalog,
+  deleteCatalog,
   createPaymentLink,
   square,
   verifySquareSignature,
@@ -278,6 +280,26 @@ async function route(req: Request): Promise<Response> {
       repo.rename(id, name);
       await syncInventory();
       return json(repo.snapshot(id));
+    }
+    if (method === "DELETE" && p.length === 2) {
+      auth(req, id);
+      const { name } = DeleteStoreRequest.parse(await body(req));
+      if (name !== currentStore.name)
+        throw new AppError(
+          400,
+          "Type the storefront's name exactly as shown to delete it.",
+        );
+      // Close first so no checkout or publish starts while Square catalog items are removed.
+      // If Square fails, the storefront stays closed and the seller retries the delete.
+      const { catalogIds, publishing } = repo.closeStore(id);
+      for (const pending of publishing)
+        for (const item of await createCatalog(pending.items, pending.key))
+          catalogIds.push(item.catalogId);
+      await deleteCatalog(catalogIds);
+      repo.deleteStore(id, process.env.BUSINESS_NAME || "My store");
+      await syncInventory();
+      const { store, stores } = sellerStores();
+      return json({ deleted: id, store, stores });
     }
     if (method === "GET" && p[2] === "qr") {
       repo.snapshot(id);
@@ -565,7 +587,7 @@ export async function handle(req: Request) {
     );
     response.headers.set(
       "Access-Control-Allow-Methods",
-      "GET, POST, PATCH, OPTIONS",
+      "GET, POST, PATCH, DELETE, OPTIONS",
     );
   }
   response.headers.set("X-Content-Type-Options", "nosniff");

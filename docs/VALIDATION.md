@@ -2,6 +2,13 @@
 
 Checked October 24, 2026, using Node 22.22.2. This is evidence of the checks below, not certification of an unconfigured deployment.
 
+## Storefront deletion revision (October 25, 2026, Node 22.22.0)
+
+- 56 automated tests. New coverage: an anonymous delete or a mistyped name is rejected without calling Square; a delete removes the storefront's items, orders, photos, activity, publications, and outbox rows, deletes its Square catalog items with one batch-delete call, queues its Convex removal, and leaves other storefronts untouched; afterward the public page, photos, receipts, and checkout return 404. Deletion is refused while a buyer's checkout is open. If Square fails, the storefront stays closed to checkouts and publishing and a retry finishes the deletion. A publication whose result was uncertain is replayed with its original idempotency key so the Square items it created are deleted too. Deleting the primary storefront promotes the next one, including for existing sessions. Deleting the only storefront opens a new empty one.
+- Root typecheck and optimized Next.js production build. Native typecheck and Expo SDK 58 export for iOS, Android, and web. `npm run smoke` against the production build.
+- Headless Chromium against the production build with a scratch database, a throwaway seller login, and no external service credentials. In the web studio at 1280 px and 390 px: open a second storefront, confirm a mistyped name keeps the delete button disabled, delete it, return to the remaining storefront (also after reload), and check for horizontal overflow. Delete the only storefront and confirm a new empty one opens and the old storefront's API returns 404. In the Expo web export at 390×844 and 360×640: open a storefront, delete it from the Connections tab, return to the remaining storefront, restore it after reload. No JS exceptions. Screenshots visually inspected.
+- Not run for this revision: real Square catalog deletion, a deployed Convex `inventory:remove`, and physical iOS/Android devices.
+
 ## Multiple storefronts revision (October 25, 2026, Node 22.22.0)
 
 - 50 automated tests. New coverage: one seller session opens, lists, renames, and scans for several storefronts; anonymous listing/creation is rejected; idempotent creation per request key and the 20-storefront cap; inventory, checkout, and stats isolation between storefronts; the paid scan limit applies to the seller, not each storefront; storefronts are scoped to the configured Square location; a database from the single-store schema upgrades in place without signing the seller out.

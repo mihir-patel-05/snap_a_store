@@ -30,6 +30,7 @@ export default function Studio() {
   const [store, setStore] = useState<Store | null>(null),
     [stores, setStores] = useState<StoreSummary[]>([]),
     [newStoreName, setNewStoreName] = useState<string | null>(null),
+    [deleteName, setDeleteName] = useState<string | null>(null),
     [restoredStore, setRestoredStore] = useState(""),
     [publishLocked, setPublishLocked] = useState(false),
     [drafts, setDrafts] = useState<DraftItem[]>([]),
@@ -102,6 +103,7 @@ export default function Studio() {
     setName(next.name);
     setUrl("");
     setComparisons(null);
+    setDeleteName(null);
     try {
       localStorage.setItem(activeStoreKey, next.id);
     } catch {}
@@ -124,6 +126,27 @@ export default function Studio() {
       });
       storeKey.current = "";
       setNewStoreName(null);
+      setStores(result.stores);
+      selectStore(result.store);
+    });
+  }
+  function deleteStore() {
+    void work("Deleting this storefront", async () => {
+      const s = await ensureStore();
+      let result: SellerStores;
+      try {
+        result = await api<SellerStores>(`/stores/${s.id}`, {
+          method: "DELETE",
+          body: JSON.stringify({ name: deleteName }),
+        });
+      } catch (e) {
+        // A retry after a lost response finds the storefront already gone.
+        if ((e as { status?: number }).status !== 404) throw e;
+        result = await api<SellerStores>("/auth/session");
+      }
+      try {
+        localStorage.removeItem(`snap-draft-v2:${s.id}`);
+      } catch {}
       setStores(result.stores);
       selectStore(result.store);
     });
@@ -319,11 +342,13 @@ export default function Studio() {
                   <span>
                     {s.name}
                     <small>
-                      {s.listed
-                        ? s.available
-                          ? `${s.available} available`
-                          : "Sold out"
-                        : "No finds yet"}
+                      {s.closing
+                        ? "Deletion unfinished"
+                        : s.listed
+                          ? s.available
+                            ? `${s.available} available`
+                            : "Sold out"
+                          : "No finds yet"}
                     </small>
                   </span>
                 </button>
@@ -667,6 +692,68 @@ export default function Studio() {
                   <Plus size={17} /> Stock updates as things sell
                 </span>
               </div>
+              <section
+                className="danger-zone"
+                aria-labelledby="delete-store-title"
+              >
+                <div>
+                  <h3 id="delete-store-title">Delete this storefront</h3>
+                  <p>
+                    Permanently removes {store.name}: its link and QR code,
+                    every listing and photo, its items in your Square catalog,
+                    and this app’s record of its sales. Payments and receipts
+                    stay in your Square account.
+                    {stores.length < 2 &&
+                      " Because it is your only storefront, a new empty one opens in its place."}
+                  </p>
+                </div>
+                {deleteName === null ? (
+                  <button
+                    className="button danger"
+                    disabled={!!busy}
+                    onClick={() => setDeleteName("")}
+                  >
+                    <Trash2 size={17} />
+                    {store.closing ? "Finish deleting" : "Delete storefront"}
+                  </button>
+                ) : (
+                  <form
+                    className="delete-confirm"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      deleteStore();
+                    }}
+                  >
+                    <label htmlFor="delete-store-name">
+                      Type <b>{store.name}</b> to confirm
+                    </label>
+                    <input
+                      id="delete-store-name"
+                      autoFocus
+                      autoComplete="off"
+                      maxLength={60}
+                      value={deleteName}
+                      onChange={(e) => setDeleteName(e.target.value)}
+                    />
+                    <div>
+                      <button
+                        className="button danger"
+                        disabled={!!busy || deleteName.trim() !== store.name}
+                      >
+                        <Trash2 size={17} /> Delete forever
+                      </button>
+                      <button
+                        type="button"
+                        className="text-link"
+                        disabled={!!busy}
+                        onClick={() => setDeleteName(null)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </section>
             </>
           )}
         </section>

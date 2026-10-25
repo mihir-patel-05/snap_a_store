@@ -174,6 +174,8 @@ npx convex deploy
 npx convex env set --prod CONVEX_SYNC_SECRET 'YOUR_GENERATED_SECRET'
 ```
 
+Run `npx convex deploy` again after upgrading the app. Deleting a storefront calls `inventory:remove`; until it is deployed, the backend logs that Convex sync is pending and keeps retrying the removal.
+
 4. Copy the **production** `.convex.cloud` URL from the Convex dashboard into:
 
 ```dotenv

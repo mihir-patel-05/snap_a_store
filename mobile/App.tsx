@@ -93,6 +93,7 @@ const C = {
   lime: "#d9ef9b",
   orange: "#df805e",
   white: "#fffefa",
+  danger: "#8b3d28",
 };
 const F = {
   regular: "DMSans_400Regular",
@@ -154,6 +155,8 @@ function SellerApp() {
     [stores, setStores] = useState<StoreSummary[]>([]),
     [storesOpen, setStoresOpen] = useState(false),
     [newStoreName, setNewStoreName] = useState(""),
+    [deleteOpen, setDeleteOpen] = useState(false),
+    [deleteName, setDeleteName] = useState(""),
     [comparisons, setComparisons] = useState<{
       item: DraftItem;
       rows: Comparison[];
@@ -380,6 +383,34 @@ function SellerApp() {
       setTab("store");
       await refresh(s);
       notify(`${result.store.name} is ready for its first finds.`);
+    });
+  }
+  async function deleteStore() {
+    if (!session || deleteName.trim() !== session.store.name) return;
+    const gone = session.store;
+    setDeleteOpen(false);
+    await run("Deleting this storefront", async () => {
+      let result: SellerStores;
+      try {
+        result = await api<SellerStores>(
+          `/stores/${gone.id}`,
+          session.token,
+          { name: deleteName.trim() },
+          "DELETE",
+        );
+      } catch (e) {
+        // A retry after a lost response finds the storefront already gone.
+        if ((e as { status?: number }).status !== 404) throw e;
+        result = await api<SellerStores>("/auth/session", session.token);
+      }
+      await AsyncStorage.removeItem(`draft:${gone.id}`).catch(() => {});
+      setDeleteName("");
+      setStores(result.stores);
+      const next = { token: session.token, store: result.store };
+      await activate(next);
+      setTab("home");
+      await refresh(next);
+      notify(`${gone.name} was deleted.`);
     });
   }
   async function signOut() {
@@ -1166,6 +1197,29 @@ function SellerApp() {
                   <Check size={16} color={C.green} />
                 </Pressable>
               </View>
+              <View style={[s.settingCard, s.dangerCard]}>
+                <Text style={s.fieldLabel}>DELETE THIS STOREFRONT</Text>
+                <Text style={s.dangerBody}>
+                  Removes its link, QR code, listings, photos, Square catalog
+                  items, and this app’s sales record. Payments stay in Square.
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  style={s.saveName}
+                  onPress={() => {
+                    setDeleteName("");
+                    setDeleteOpen(true);
+                  }}
+                  disabled={!!busy}
+                >
+                  <Text style={[s.smallBold, { color: C.danger }]}>
+                    {snapshot?.store.closing
+                      ? "Finish deleting"
+                      : "Delete storefront"}
+                  </Text>
+                  <Trash2 size={16} color={C.danger} />
+                </Pressable>
+              </View>
               <View style={s.sectionRow}>
                 <Text style={s.sectionTitle}>Your store’s superpowers</Text>
                 <Zap size={20} color={C.orange} />
@@ -1400,11 +1454,13 @@ function SellerApp() {
                             {store.name}
                           </Text>
                           <Text style={s.tiny}>
-                            {store.listed
-                              ? store.available
-                                ? `${store.available} finds available`
-                                : "Sold out"
-                              : "No finds yet"}
+                            {store.closing
+                              ? "Deletion unfinished"
+                              : store.listed
+                                ? store.available
+                                  ? `${store.available} finds available`
+                                  : "Sold out"
+                                : "No finds yet"}
                           </Text>
                         </View>
                         {open && <Check size={18} color={C.green} />}
@@ -1434,6 +1490,77 @@ function SellerApp() {
                   onPress={() => void openStore()}
                   disabled={newStoreName.trim().length < 2 || !!busy}
                 />
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+        <Modal
+          transparent
+          visible={deleteOpen}
+          animationType="slide"
+          onRequestClose={() => setDeleteOpen(false)}
+        >
+          <KeyboardAvoidingView
+            style={s.flex}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
+            <View style={s.modalBackground}>
+              <Pressable
+                style={s.modalDismiss}
+                accessibilityLabel="Keep this storefront"
+                onPress={() => setDeleteOpen(false)}
+              />
+              <View style={s.sheet}>
+                <View style={s.sheetHandle} />
+                <Eyebrow text="DELETE STOREFRONT" />
+                <Text style={s.sheetTitle}>
+                  Delete<Text style={s.italic}> {session.store.name}?</Text>
+                </Text>
+                <Text style={s.sheetBody}>
+                  This can’t be undone. Its link and QR code stop working, and
+                  every listing, photo, and Square catalog item it published is
+                  removed, along with this app’s record of its sales. Payments
+                  and receipts stay in your Square account.
+                  {stores.length < 2
+                    ? " Because it is your only storefront, a new empty one opens in its place."
+                    : ""}
+                </Text>
+                <Text style={s.fieldLabel}>
+                  TYPE “{session.store.name}” TO CONFIRM
+                </Text>
+                <TextInput
+                  style={[s.storeNameInput, { fontSize: 20, marginBottom: 18 }]}
+                  value={deleteName}
+                  onChangeText={setDeleteName}
+                  placeholder={session.store.name}
+                  placeholderTextColor={C.muted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  maxLength={60}
+                  accessibilityLabel="Type the storefront name to confirm"
+                />
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => void deleteStore()}
+                  disabled={!!busy || deleteName.trim() !== session.store.name}
+                  style={({ pressed }) => [
+                    s.button,
+                    { backgroundColor: C.danger },
+                    (!!busy || deleteName.trim() !== session.store.name) && {
+                      opacity: 0.5,
+                    },
+                    pressed && { transform: [{ scale: 0.985 }] },
+                  ]}
+                >
+                  <Text style={s.buttonText}>Delete forever</Text>
+                  <Trash2 size={18} color="white" />
+                </Pressable>
+                <Pressable
+                  style={s.secondaryButton}
+                  onPress={() => setDeleteOpen(false)}
+                >
+                  <Text style={s.buttonDark}>Keep this storefront</Text>
+                </Pressable>
               </View>
             </View>
           </KeyboardAvoidingView>
@@ -2340,6 +2467,13 @@ const s = StyleSheet.create({
     borderBottomColor: C.line,
     paddingVertical: 10,
     minHeight: 48,
+  },
+  dangerCard: { marginTop: 14, borderColor: "#edc8b8" },
+  dangerBody: {
+    fontFamily: F.regular,
+    fontSize: 12,
+    lineHeight: 19,
+    color: C.muted,
   },
   saveName: {
     flexDirection: "row",

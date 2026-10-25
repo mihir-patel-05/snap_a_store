@@ -30,6 +30,21 @@ export const sync = mutationGeneric({
     else await ctx.db.insert("stores", value);
   },
 });
+export const remove = mutationGeneric({
+  args: { secret: v.string(), storeId: v.string() },
+  handler: async (ctx, { secret, storeId }) => {
+    if (
+      !process.env.CONVEX_SYNC_SECRET ||
+      secret !== process.env.CONVEX_SYNC_SECRET
+    )
+      throw new Error("Unauthorized");
+    const existing = await ctx.db
+      .query("stores")
+      .withIndex("by_store", (q) => q.eq("storeId", storeId))
+      .unique();
+    if (existing) await ctx.db.delete(existing._id);
+  },
+});
 export const watch = queryGeneric({
   args: { storeId: v.string() },
   handler: async (ctx, { storeId }) => {
