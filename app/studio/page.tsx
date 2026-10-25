@@ -12,8 +12,10 @@ import {
   Trash2,
   ArrowLeft,
   ScanLine,
+  Pencil,
 } from "lucide-react";
 import { Brand, ItemArt } from "@/components/brand";
+import { ProductEditor } from "@/components/product-editor";
 import { PaymentSetup } from "@/components/payment-setup";
 import { newRequestKey } from "@/lib/request-key";
 import { api, useStore } from "@/lib/client";
@@ -722,7 +724,7 @@ export default function Studio() {
                   />
                 </label>
               )}
-              {store && <Dashboard id={store.id} />}
+              {store && <Dashboard key={store.id} id={store.id} />}
               {url && (
                 <div className="success-card">
                   <Check />
@@ -825,7 +827,16 @@ function ArrowUpRightIcon() {
   return <ExternalLink size={14} />;
 }
 function Dashboard({ id }: { id: string }) {
-  const { data } = useStore(id);
+  const { data: live } = useStore(id);
+  const [saved, setSaved] = useState<StoreSnapshot | null>(null);
+  const [editing, setEditing] = useState<StoreSnapshot["items"][number] | null>(
+    null,
+  );
+  const [message, setMessage] = useState("");
+  const data =
+    saved && (!live || saved.store.revision > live.store.revision)
+      ? saved
+      : live;
   if (!data?.items.length) return null;
   return (
     <>
@@ -855,6 +866,23 @@ function Dashboard({ id }: { id: string }) {
           Open storefront <ExternalLink size={16} />
         </a>
       </div>
+      {message && (
+        <p role="status" className="product-edit-note">
+          {message}
+        </p>
+      )}
+      {editing && (
+        <ProductEditor
+          key={editing.id}
+          item={editing}
+          onClose={() => setEditing(null)}
+          onSaved={(next) => {
+            setSaved(next);
+            setEditing(null);
+            setMessage("Product updated.");
+          }}
+        />
+      )}
       <div className="inventory-list">
         {data.items.map((i) => (
           <div key={i.id}>
@@ -862,12 +890,25 @@ function Dashboard({ id }: { id: string }) {
             <span>
               <strong>{i.name}</strong>
               <small>
-                {i.remaining === 0
-                  ? "Sold out"
-                  : `${i.available} available${i.remaining > i.available ? " · checkout in progress" : ""}`}
+                {i.editing
+                  ? "Saving changes · reopen Edit to finish"
+                  : i.remaining === 0
+                    ? "Sold out"
+                    : `${i.available} available${i.remaining > i.available ? " · checkout in progress" : ""}`}
               </small>
             </span>
             <b>{money(i.price)}</b>
+            <button
+              className="button product-edit-trigger"
+              aria-label={`Edit ${i.name}`}
+              disabled={data.store.closing}
+              onClick={() => {
+                setMessage("");
+                setEditing(i);
+              }}
+            >
+              <Pencil size={15} /> Edit
+            </button>
           </div>
         ))}
       </div>

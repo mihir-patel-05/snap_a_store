@@ -5,10 +5,18 @@ Checked October 24, 2026, using Node 22.22.2. This is evidence of the checks bel
 ## Market-checked scan prices (October 25, 2026, Node 22.22.0)
 
 - Scans now research prices automatically. Claude writes an eBay search query for each identifiable item. Apify searches for up to 6 of them per scan, highest estimated value first. A second Claude turn, continuing the same conversation with the photo, decides which listings match and re-prices those items. The manual Compare market prices button is gone from both clients; `/compare` stays for older app builds.
-- 82 automated tests. New coverage: only identifiable items are searched; the follow-up turn replays Claude's first answer unchanged and labels listing titles as untrusted; only listings Claude matched are kept, with a median computed from them; a failed Apify run or follow-up keeps Claude's estimate and shows no market check; a search with no listings is reported without a second Claude call; no Apify credentials means no lookups; long listing titles are trimmed to the contract limit.
+- 89 automated tests after merging main. New coverage: only identifiable items are searched; the follow-up turn replays Claude's first answer unchanged and labels listing titles as untrusted; only listings Claude matched are kept, with a median computed from them; a failed Apify run or follow-up keeps Claude's estimate and shows no market check; a search with no listings is reported without a second Claude call; no Apify credentials means no lookups; long listing titles are trimmed to the contract limit.
 - Root typecheck and production build. Native typecheck and Expo export for iOS, Android, and web.
 - Headless Chromium against the production build with a scratch database, a throwaway seller login, and a placeholder Square location ID. Injected drafts with matched and unmatched market evidence: the web studio shows the market check and source links under Why this price? at 1280 px and 390 px, with no horizontal overflow and no JS exceptions.
 - Not run for this revision: a live Claude + Apify scan (no credentials in this environment), the Expo app's new market-check rows on a device or in the web export, and scan latency on a real connection. The mobile scan timeout is now 180 s to allow for the lookups and second Claude pass.
+
+## Saved-product editing (October 24, 2026, Node 22.22.2)
+
+- All 85 tests in 9 files pass. Seven new tests cover owner-only edits, validation, Square object/version preservation, immutable checkout prices, reservation limits, concurrent payment completion, durable retries, stale edits, sold-out status, and restocking.
+- Root and native TypeScript checks pass. The optimized Next.js build and Expo exports for iOS, Android, and web pass.
+- Headless Chrome at 390×844 exercises both the web dashboard and Expo web editor: cancel discards changes, reopening restores saved values, all six editable fields reach the save request, and a successful save immediately updates the collection. No JavaScript exceptions or horizontal overflow. Editor screenshots were visually inspected.
+- UI checks use an isolated temporary database/login and intercept edit responses; the real API handler and SQLite persistence are covered separately with Square mocked at the provider boundary. Run `scripts/product-edit-smoke.mjs` with `SMOKE_URL`, `NATIVE_SMOKE_URL`, `SMOKE_STORE_ID`, `SMOKE_EMAIL`, and `SMOKE_PASSWORD` pointing to an isolated test environment.
+- No live catalog mutations, production deployment, signed native build, or physical-device check was performed for this change. Existing deployments create the `item_edits` table automatically at startup.
 
 ## Merge with Google sign-in and seller Square accounts (October 25, 2026, Node 22.22.0)
 

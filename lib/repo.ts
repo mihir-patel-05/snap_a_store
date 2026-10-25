@@ -9,6 +9,7 @@ import {
 } from "node:crypto";
 import type {
   DraftItem,
+  EditItemRequest,
   Item,
   Order,
   Store,
@@ -20,6 +21,14 @@ import { AppError } from "./server/errors";
 import { credentialVersion } from "./server/auth";
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
 const now = () => new Date().toISOString();
+type SavedItemEdit = {
+  storeId: string;
+  input: EditItemRequest;
+  item: Item;
+  originalRemaining: number;
+  state: "pending" | "done";
+  squareRequest?: Record<string, unknown>;
+};
 const MAX_STORES = 20;
 // seller_stores.environment is the owning account's scope. The password seller has
 // one scope per Square environment and location; each Google seller has their own.
@@ -31,15 +40,17 @@ export function createRepo(
 ) {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path);
+  db.pragma("busy_timeout = 5000");
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
-  db.pragma("busy_timeout = 5000");
   db.exec(`CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, store_id TEXT NOT NULL, credential_version TEXT NOT NULL, expires_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS primary_stores (environment TEXT PRIMARY KEY, store_id TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS limits (key TEXT PRIMARY KEY, count INTEGER NOT NULL, until INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS jobs (name TEXT PRIMARY KEY, until INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS stores (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS items (id TEXT PRIMARY KEY, store_id TEXT NOT NULL REFERENCES stores(id), data TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS item_edits (id TEXT PRIMARY KEY, store_id TEXT NOT NULL REFERENCES stores(id) ON DELETE CASCADE, item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE, data TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS item_edits_item ON item_edits(item_id);
     CREATE TABLE IF NOT EXISTS orders (id TEXT PRIMARY KEY, store_id TEXT NOT NULL REFERENCES stores(id), request_key TEXT UNIQUE NOT NULL, square_order_id TEXT UNIQUE, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS publishes (id TEXT PRIMARY KEY, store_id TEXT NOT NULL, fingerprint TEXT NOT NULL, state TEXT NOT NULL, items TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS photos (id TEXT PRIMARY KEY, store_id TEXT NOT NULL, bytes BLOB NOT NULL);
@@ -166,10 +177,20 @@ export function createRepo(
         reserved.set(l.itemId, (reserved.get(l.itemId) || 0) + l.quantity);
     return {
       store: s,
-      items: items(id).map((i) => ({
-        ...i,
-        available: Math.max(0, i.remaining - (reserved.get(i.id) || 0)),
-      })),
+      items: items(id).map((i) => {
+        const pending = get<SavedItemEdit>(
+          "SELECT data FROM item_edits WHERE item_id=? AND json_extract(data, '$.state')='pending'",
+          i.id,
+        );
+        return {
+          ...i,
+          available: pending
+            ? 0
+            : Math.max(0, i.remaining - (reserved.get(i.id) || 0)),
+          editing: Boolean(pending),
+          pendingEdit: pending?.input,
+        };
+      }),
       stats: {
         revenue: paid.reduce((s, o) => s + o.totalCents, 0) / 100,
         sold: paid.flatMap((o) => o.lines).reduce((s, l) => s + l.quantity, 0),
@@ -191,7 +212,11 @@ export function createRepo(
         ...value,
         store: { ...value.store, locationId: undefined, merchantId: undefined },
         // Claude's pricing notes are for the seller, not buyers.
-        items: value.items.map((i) => ({ ...i, priceRationale: undefined })),
+        items: value.items.map((i) => ({
+          ...i,
+          priceRationale: undefined,
+          pendingEdit: undefined,
+        })),
         stats: { revenue: 0, sold: 0, orders: 0 },
         activity: [],
       };
@@ -273,6 +298,11 @@ export function createRepo(
       const s = store(id);
       if (!s) throw new AppError(404, "Store not found.");
       if (openOrders(id)) throw checkoutOpen();
+      if (snapshot(id).items.some((i) => i.editing))
+        throw new AppError(
+          409,
+          "Finish saving your product changes before deleting this storefront.",
+        );
       if (!s.closing) {
         s.closing = true;
         db.prepare("UPDATE stores SET data=? WHERE id=?").run(
@@ -602,6 +632,131 @@ export function createRepo(
       );
       touch(id, `${made.length} new finds added to your store`);
     }),
+    beginItemEdit: db.transaction(
+      (storeId: string, itemId: string, input: EditItemRequest) => {
+        if (store(storeId)?.closing)
+          throw new AppError(409, "This storefront is being deleted.");
+        const old = get<SavedItemEdit>(
+          "SELECT data FROM item_edits WHERE id=?",
+          input.requestKey,
+        );
+        if (old) {
+          if (
+            old.storeId !== storeId ||
+            old.item.id !== itemId ||
+            JSON.stringify(old.input) !== JSON.stringify(input)
+          )
+            throw new AppError(
+              409,
+              "This save key was already used for different changes.",
+            );
+          return old;
+        }
+        const item = snapshot(storeId).items.find((i) => i.id === itemId);
+        if (!item) throw new AppError(404, "Product not found.");
+        if (item.editing)
+          throw new AppError(
+            409,
+            "This product has a save in progress. Reopen Edit to retry it.",
+          );
+        if ((item.editVersion || 0) !== input.expectedVersion)
+          throw new AppError(
+            409,
+            "This product changed. Close and reopen Edit to load the latest stock and details.",
+          );
+        if (input.remaining < item.remaining - item.available)
+          throw new AppError(
+            409,
+            "Stock cannot be lower than the quantity reserved in open checkouts.",
+          );
+        if (
+          orders(storeId).some(
+            (o) =>
+              o.state === "creating" &&
+              o.lines.some((l) => l.itemId === itemId),
+          )
+        )
+          throw new AppError(
+            409,
+            "A checkout is being created for this product. Please retry shortly.",
+          );
+        const { requestKey, expectedVersion, ...changes } = input;
+        const edit: SavedItemEdit = {
+          storeId,
+          input,
+          state: "pending",
+          originalRemaining: item.remaining,
+          item: {
+            ...item,
+            ...changes,
+            editing: undefined,
+            pendingEdit: undefined,
+          },
+        };
+        db.prepare("INSERT INTO item_edits VALUES(?,?,?,?)").run(
+          requestKey,
+          storeId,
+          itemId,
+          JSON.stringify(edit),
+        );
+        touch(storeId);
+        return edit;
+      },
+    ),
+    saveItemEditRequest: db.transaction(
+      (key: string, request: Record<string, unknown>) => {
+        const edit = get<SavedItemEdit>(
+          "SELECT data FROM item_edits WHERE id=?",
+          key,
+        );
+        if (!edit) throw new AppError(404, "Product save not found.");
+        if (!edit.squareRequest) {
+          edit.squareRequest = request;
+          db.prepare("UPDATE item_edits SET data=? WHERE id=?").run(
+            JSON.stringify(edit),
+            key,
+          );
+        }
+        return edit.squareRequest;
+      },
+    ),
+    finishItemEdit: db.transaction((key: string) => {
+      const edit = get<SavedItemEdit>(
+        "SELECT data FROM item_edits WHERE id=?",
+        key,
+      );
+      if (!edit) throw new AppError(404, "Product save not found.");
+      if (edit.state === "done") return;
+      const current = get<Item>(
+        "SELECT data FROM items WHERE id=?",
+        edit.item.id,
+      );
+      if (!current) throw new AppError(404, "Product not found.");
+      // Payments for existing reservations can complete during the Square call.
+      // Apply the stock adjustment to the current count, never restore sold units.
+      const delta = edit.input.remaining - edit.originalRemaining;
+      const remaining = current.remaining + delta;
+      const { requestKey, expectedVersion, ...changes } = edit.input;
+      const updated: Item = {
+        ...current,
+        ...changes,
+        remaining,
+        available: remaining,
+        quantity: current.quantity + delta,
+        status: remaining === 0 ? "sold" : "live",
+        editVersion: (current.editVersion || 0) + 1,
+      };
+      db.prepare("UPDATE items SET data=? WHERE id=?").run(
+        JSON.stringify(updated),
+        current.id,
+      );
+      edit.state = "done";
+      db.prepare("UPDATE item_edits SET data=? WHERE id=?").run(
+        JSON.stringify(edit),
+        key,
+      );
+      touch(edit.storeId, `Updated ${updated.name}`);
+    }),
     reserve: db.transaction(
       (
         id: string,
@@ -633,6 +788,11 @@ export function createRepo(
           );
         const details = lines.map((l) => {
           const item = snap.items.find((i) => i.id === l.itemId);
+          if (item?.editing)
+            throw new AppError(
+              409,
+              "This product is being updated. Please retry shortly.",
+            );
           if (!item || item.available < l.quantity)
             throw new AppError(
               409,
@@ -742,6 +902,7 @@ export function createRepo(
           if (item.remaining < line.quantity)
             throw new AppError(409, "Inventory reconciliation required.");
           item.remaining -= line.quantity;
+          item.editVersion = (item.editVersion || 0) + 1;
           item.available = item.remaining;
           item.status = item.remaining === 0 ? "sold" : "live";
           db.prepare("UPDATE items SET data=? WHERE id=?").run(

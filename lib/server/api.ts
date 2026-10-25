@@ -7,6 +7,7 @@ import {
   CreateStoreRequest,
   DeleteStoreRequest,
   PublishRequest,
+  EditItemRequest,
   type Integration,
   StoreBusiness,
 } from "../contracts";
@@ -44,6 +45,8 @@ import { AppError, requireConfig } from "./errors";
 import { prepareImage, scanPhoto } from "../providers/vision";
 import {
   createCatalog,
+  prepareCatalogEdit,
+  updateCatalogItem,
   deleteCatalog,
   createPaymentLink,
   square,
@@ -320,6 +323,27 @@ async function route(req: Request): Promise<Response> {
     const currentStore = repo.store(id);
     if (!currentStore) throw new AppError(404, "Store not found.");
     assertStoreEnvironment(currentStore);
+    if (method === "PATCH" && p[2] === "items" && p[3] && p.length === 4) {
+      auth(req, id);
+      const input = EditItemRequest.parse(await body(req));
+      requirePayments(currentStore);
+      await squareAccessToken(id);
+      const edit = repo.beginItemEdit(id, decodeURIComponent(p[3]), input);
+      if (edit.state !== "done") {
+        // Persist the exact versioned Square request before sending it. A timeout
+        // or restart must retry the identical body with the same idempotency key.
+        const request =
+          edit.squareRequest ||
+          repo.saveItemEditRequest(
+            input.requestKey,
+            await prepareCatalogEdit(edit.item, input.requestKey),
+          );
+        await updateCatalogItem(request, edit.item);
+        repo.finishItemEdit(input.requestKey);
+      }
+      await syncInventory();
+      return json(repo.snapshot(id));
+    }
     if (p[2] === "square") {
       auth(req, id);
       if (method === "POST" && p[3] === "connect" && p.length === 4) {

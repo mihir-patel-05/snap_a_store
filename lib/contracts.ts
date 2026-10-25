@@ -62,6 +62,18 @@ export const DraftItem = z.object({
   photoId: z.string().max(80).optional(),
 });
 export type DraftItem = z.infer<typeof DraftItem>;
+export const ItemChanges = DraftItem.pick({
+  name: true,
+  description: true,
+  category: true,
+  price: true,
+  condition: true,
+}).extend({ remaining: z.number().int().min(0).max(100) });
+export const EditItemRequest = ItemChanges.extend({
+  requestKey: z.string().uuid(),
+  expectedVersion: z.number().int().nonnegative(),
+});
+export type EditItemRequest = z.infer<typeof EditItemRequest>;
 export type Item = DraftItem & {
   storeId: string;
   remaining: number;
@@ -70,6 +82,9 @@ export type Item = DraftItem & {
   catalogId?: string;
   variationId?: string;
   publishedAt: string;
+  editVersion?: number;
+  editing?: boolean;
+  pendingEdit?: EditItemRequest;
 };
 export type Store = {
   id: string;
