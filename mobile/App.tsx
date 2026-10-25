@@ -492,7 +492,7 @@ function SellerApp() {
           s.token,
           form,
           undefined,
-          180000,
+          240000,
         );
         if (!r.items.length) throw new Error(r.message);
         setDrafts(r.items);
