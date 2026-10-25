@@ -17,7 +17,8 @@
       "bundleIdentifier": "com.snapastore.mobile",
       "infoPlist": {
         "NSCameraUsageDescription": "Photograph your items to create editable store listings.",
-        "NSPhotoLibraryUsageDescription": "Choose a photo of the things you want to sell."
+        "NSPhotoLibraryUsageDescription": "Choose a photo of the things you want to sell.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -26,9 +27,14 @@
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#193d33"
       },
-      "permissions": ["CAMERA"]
+      "permissions": [
+        "CAMERA"
+      ]
     },
-    "web": { "bundler": "metro", "favicon": "./assets/icon.png" },
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/icon.png"
+    },
     "plugins": [
       [
         "expo-image-picker",
@@ -39,6 +45,12 @@
         }
       ],
       "expo-secure-store"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "be407723-1648-47d4-9304-63c271fa040c"
+      }
+    },
+    "owner": "neelpatel025"
   }
 }

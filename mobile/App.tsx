@@ -20,6 +20,8 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
+import { File } from "expo-file-system";
+import { photoForm } from "./lib/photo-form";
 import * as Crypto from "expo-crypto";
 import * as Haptics from "expo-haptics";
 import * as Clipboard from "expo-clipboard";
@@ -376,20 +378,11 @@ function SellerApp() {
           { compress: 0.85, format: ImageManipulator.SaveFormat.JPEG },
         );
         const s = await ensureStore();
-        const form = new FormData();
-        if (Platform.OS === "web") {
-          form.append(
-            "photo",
-            await (await fetch(processed.uri)).blob(),
-            "table.jpg",
-          );
-        } else {
-          form.append("photo", {
-            uri: processed.uri,
-            name: "table.jpg",
-            type: "image/jpeg",
-          } as unknown as Blob);
-        }
+        const upload =
+          Platform.OS === "web"
+            ? await (await fetch(processed.uri)).blob()
+            : new File(processed.uri);
+        const form = photoForm(upload);
         const r = await api<{ items: DraftItem[]; message: string }>(
           `/scan?storeId=${s.store.id}`,
           s.token,
