@@ -26,7 +26,7 @@ export default function Home() {
           <h1>
             Your table.
             <br />
-            Your next
+            Your next{" "}
             <br />
             <em>little store.</em>
           </h1>
