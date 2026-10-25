@@ -27,6 +27,11 @@ export const fixtureItems: DraftItem[] = [
     condition: "Check condition",
     reasoning:
       "Demo estimate. Test the switch and wiring; material and age are unverified.",
+    priceRationale: {
+      assumedCondition: "Check condition",
+      conditionNote: "Finish looks intact; power and wiring cannot be seen.",
+      factors: ["Brass-tone finish, maker unknown", "Working order untested"],
+    },
   },
   {
     id: "fixture-books",

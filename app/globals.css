@@ -809,6 +809,24 @@ footer > span {
 .price-qty label > div input {
   padding-left: 26px;
 }
+.condition-field {
+  font-size: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: var(--muted);
+  margin-top: 14px;
+}
+.condition-field select {
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  width: 100%;
+  padding: 10px;
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 13px;
+}
 .draft-body details {
   margin: 15px 0;
   color: var(--muted);
@@ -820,6 +838,17 @@ footer > span {
 }
 .draft-body details p {
   margin-top: 7px;
+}
+.draft-body details b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.draft-body details ul {
+  margin: 5px 0 0;
+  padding-left: 15px;
+}
+.draft-body details .rationale-note {
+  font-style: italic;
 }
 .compare-button {
   display: flex;

@@ -19,6 +19,7 @@ import { PaymentSetup } from "@/components/payment-setup";
 import { newRequestKey } from "@/lib/request-key";
 import { api, useStore } from "@/lib/client";
 import {
+  Condition,
   money,
   type DraftItem,
   type Store,
@@ -564,9 +565,50 @@ export default function Studio() {
                           />
                         </label>
                       </div>
+                      <label className="condition-field">
+                        Condition
+                        <select
+                          aria-label={`Condition of ${d.name}`}
+                          disabled={!!busy || publishLocked}
+                          value={d.condition}
+                          onChange={(e) =>
+                            change(d.id, {
+                              condition: e.target.value as Condition,
+                            })
+                          }
+                        >
+                          {Condition.options.map((c) => (
+                            <option key={c}>{c}</option>
+                          ))}
+                        </select>
+                      </label>
                       <details>
                         <summary>Why this price?</summary>
+                        {d.priceRationale && (
+                          <>
+                            <p>
+                              <b>
+                                {d.priceRationale.assumedCondition ===
+                                "Check condition"
+                                  ? "Claude couldn’t confirm the condition."
+                                  : `Claude assumed ${d.priceRationale.assumedCondition.toLowerCase()} condition.`}
+                              </b>{" "}
+                              {d.priceRationale.conditionNote}
+                            </p>
+                            {d.priceRationale.factors.length > 0 && (
+                              <ul>
+                                {d.priceRationale.factors.map((f, n) => (
+                                  <li key={n}>{f}</li>
+                                ))}
+                              </ul>
+                            )}
+                          </>
+                        )}
                         <p>{d.reasoning}</p>
+                        <p className="rationale-note">
+                          Claude’s estimate from your photo, not an appraisal or
+                          recent sales.
+                        </p>
                       </details>
                       <button
                         className="compare-button"

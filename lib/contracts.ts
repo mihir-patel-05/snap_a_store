@@ -9,6 +9,21 @@ export const Money = z
     (n) => Math.abs(n * 100 - Math.round(n * 100)) < 0.00001,
     "Use at most two decimal places",
   );
+export const Condition = z.enum([
+  "Like new",
+  "Good",
+  "Fair",
+  "Check condition",
+]);
+export type Condition = z.infer<typeof Condition>;
+// Claude's explanation of its estimate, for the seller only. assumedCondition
+// keeps Claude's original call after the seller corrects `condition`.
+export const PriceRationale = z.object({
+  assumedCondition: Condition,
+  conditionNote: z.string().max(200),
+  factors: z.array(z.string().trim().min(1).max(140)).max(4),
+});
+export type PriceRationale = z.infer<typeof PriceRationale>;
 export const DraftItem = z.object({
   id: z.string().min(1).max(80),
   name: z.string().trim().min(2).max(100),
@@ -20,10 +35,10 @@ export const DraftItem = z.object({
   price: Money,
   quantity: z.number().int().min(1).max(100),
   confidence: z.number().min(0).max(1),
-  condition: z
-    .enum(["Like new", "Good", "Fair", "Check condition"])
-    .default("Check condition"),
+  condition: Condition.default("Check condition"),
   reasoning: z.string().max(500).default("Seller review recommended."),
+  // Optional so drafts saved before this field, and items already published, stay valid.
+  priceRationale: PriceRationale.optional(),
   photoId: z.string().max(80).optional(),
 });
 export type DraftItem = z.infer<typeof DraftItem>;
