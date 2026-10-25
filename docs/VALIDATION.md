@@ -2,12 +2,6 @@
 
 Checked October 24, 2026, using Node 22.22.2. This is evidence of the checks below, not certification of an unconfigured deployment.
 
-## High-effort scan pricing (October 25, 2026, Node 22.22.0)
-
-- Both Claude calls in a scan (identification and the market re-pricing turn) now run at `high` effort instead of `medium`, for more deliberate pricing at the cost of latency and output tokens. Each call may take up to 90 s (was 45 s), and the mobile scan timeout is 240 s (was 180 s).
-- 89 automated tests, now asserting the effort on both calls. Root and native typecheck.
-- Not run: a live scan to measure the added latency or token cost.
-
 ## Market-checked scan prices (October 25, 2026, Node 22.22.0)
 
 - Scans now research prices automatically. Claude writes an eBay search query for each identifiable item. Apify searches for up to 6 of them per scan, highest estimated value first. A second Claude turn, continuing the same conversation with the photo, decides which listings match and re-prices those items. The manual Compare market prices button is gone from both clients; `/compare` stays for older app builds.

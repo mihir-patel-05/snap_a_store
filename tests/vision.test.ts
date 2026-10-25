@@ -44,7 +44,6 @@ describe("Claude photo scan", () => {
     const items = await scanPhoto(Buffer.from("jpeg"));
     const params = create.mock.calls[0][0];
     expect(params.system).toBe(VISION_SYSTEM_PROMPT);
-    expect(params.output_config.effort).toBe("high");
     expect(params.tool_choice).toBeUndefined();
     expect(params.tools).toBeUndefined();
     expect(params.output_config.format.type).toBe("json_schema");
@@ -184,7 +183,6 @@ describe("market-checked scan prices", () => {
     ]);
     const follow = create.mock.calls[1][0];
     expect(follow.system).toBe(VISION_SYSTEM_PROMPT);
-    expect(follow.output_config.effort).toBe("high");
     expect(follow.messages[1]).toEqual({
       role: "assistant",
       content: first.content,
