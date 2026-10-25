@@ -190,6 +190,8 @@ export function createRepo(
       return {
         ...value,
         store: { ...value.store, locationId: undefined, merchantId: undefined },
+        // Claude's pricing notes are for the seller, not buyers.
+        items: value.items.map((i) => ({ ...i, priceRationale: undefined })),
         stats: { revenue: 0, sold: 0, orders: 0 },
         activity: [],
       };

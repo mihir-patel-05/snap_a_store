@@ -47,6 +47,7 @@ import {
   Camera,
   Check,
   ChevronDown,
+  ChevronUp,
   ChevronRight,
   CircleHelp,
   Coffee,
@@ -108,6 +109,12 @@ const F = {
   italic: "Fraunces_500Medium_Italic",
 };
 type Tab = "home" | "store" | "connections";
+const CONDITIONS: DraftItem["condition"][] = [
+  "Like new",
+  "Good",
+  "Fair",
+  "Check condition",
+];
 export default function App() {
   const [loaded, error] = useFonts({
     DMSans_400Regular,
@@ -162,6 +169,7 @@ function SellerApp() {
     [newStoreName, setNewStoreName] = useState(""),
     [deleteOpen, setDeleteOpen] = useState(false),
     [deleteName, setDeleteName] = useState(""),
+    [whyOpen, setWhyOpen] = useState<string[]>([]),
     [comparisons, setComparisons] = useState<{
       item: DraftItem;
       rows: Comparison[];
@@ -937,7 +945,83 @@ function SellerApp() {
                       </View>
                     </View>
                   </View>
-                  <Text style={s.reason}>{d.reasoning}</Text>
+                  <Text style={[s.fieldLabel, { marginTop: 15 }]}>
+                    CONDITION
+                  </Text>
+                  <View style={s.conditions} accessibilityRole="radiogroup">
+                    {CONDITIONS.map((c) => (
+                      <Pressable
+                        key={c}
+                        accessibilityRole="radio"
+                        accessibilityLabel={`${c}, condition of ${d.name}`}
+                        accessibilityState={{
+                          checked: d.condition === c,
+                          disabled: !!busy || publishLocked,
+                        }}
+                        onPress={() => edit(d.id, { condition: c })}
+                        disabled={!!busy || publishLocked}
+                        style={[
+                          s.conditionChip,
+                          d.condition === c && s.conditionChipOn,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            s.conditionText,
+                            d.condition === c && s.conditionTextOn,
+                          ]}
+                        >
+                          {c}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded: whyOpen.includes(d.id) }}
+                    onPress={() =>
+                      setWhyOpen((open) =>
+                        open.includes(d.id)
+                          ? open.filter((id) => id !== d.id)
+                          : [...open, d.id],
+                      )
+                    }
+                    style={s.whyToggle}
+                  >
+                    <Text style={s.smallBold}>Why this price?</Text>
+                    {whyOpen.includes(d.id) ? (
+                      <ChevronUp size={15} color={C.green} />
+                    ) : (
+                      <ChevronDown size={15} color={C.green} />
+                    )}
+                  </Pressable>
+                  {whyOpen.includes(d.id) && (
+                    <View>
+                      {d.priceRationale && (
+                        <>
+                          <Text style={s.reason}>
+                            <Text style={s.reasonLead}>
+                              {d.priceRationale.assumedCondition ===
+                              "Check condition"
+                                ? "Claude couldn’t confirm the condition."
+                                : `Claude assumed ${d.priceRationale.assumedCondition.toLowerCase()} condition.`}
+                            </Text>{" "}
+                            {d.priceRationale.conditionNote}
+                          </Text>
+                          {d.priceRationale.factors.map((f, n) => (
+                            <Text key={n} style={s.reason}>
+                              • {f}
+                            </Text>
+                          ))}
+                        </>
+                      )}
+                      <Text style={s.reason}>{d.reasoning}</Text>
+                      <Text style={[s.reason, { fontStyle: "italic" }]}>
+                        Claude’s estimate from your photo, not an appraisal or
+                        recent sales.
+                      </Text>
+                    </View>
+                  )}
                   <Pressable
                     style={s.comparison}
                     disabled={!!busy}
@@ -2362,13 +2446,34 @@ const s = StyleSheet.create({
   },
   step: { fontFamily: F.medium, fontSize: 23, color: C.green, padding: 3 },
   qty: { fontFamily: F.medium, fontSize: 15, color: C.ink },
+  conditions: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  conditionChip: {
+    borderWidth: 1,
+    borderColor: C.line,
+    borderRadius: 999,
+    paddingHorizontal: 11,
+    minHeight: 32,
+    justifyContent: "center",
+    backgroundColor: "white",
+  },
+  conditionChipOn: { backgroundColor: C.green, borderColor: C.green },
+  conditionText: { fontFamily: F.medium, fontSize: 11, color: C.ink },
+  conditionTextOn: { color: "white" },
+  whyToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginTop: 13,
+    minHeight: 32,
+  },
   reason: {
     fontFamily: F.regular,
     fontSize: 10,
     lineHeight: 16,
     color: C.muted,
-    marginTop: 13,
+    marginTop: 5,
   },
+  reasonLead: { fontFamily: F.semi, color: C.ink },
   comparison: {
     flexDirection: "row",
     alignItems: "center",

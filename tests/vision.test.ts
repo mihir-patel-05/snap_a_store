@@ -29,6 +29,10 @@ describe("Claude photo scan", () => {
               quantity: 2,
               confidence: 0.9,
               condition: "Good",
+              rationale: {
+                conditionNote: "No chips visible; light wear on the handle.",
+                factors: ["Plain mug, no brand visible", "Sold per unit"],
+              },
               reasoning: "Clearly visible; condition unverified.",
             },
           ],
@@ -40,14 +44,54 @@ describe("Claude photo scan", () => {
     expect(params.tool_choice).toBeUndefined();
     expect(params.tools).toBeUndefined();
     expect(params.output_config.format.type).toBe("json_schema");
+    expect(
+      params.output_config.format.schema.properties.items.items.required,
+    ).toContain("rationale");
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({
       name: "Blue mug",
       suggestedPrice: 7.5,
       price: 7.5,
       quantity: 2,
+      priceRationale: {
+        assumedCondition: "Good",
+        conditionNote: "No chips visible; light wear on the handle.",
+        factors: ["Plain mug, no brand visible", "Sold per unit"],
+      },
     });
+    expect(items[0]).not.toHaveProperty("rationale");
     expect(items[0].id).toBeTruthy();
+  });
+  it("fits the price rationale to listing limits without inventing reasons", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "test-key");
+    create.mockResolvedValue(
+      reply(
+        JSON.stringify({
+          items: [
+            {
+              name: "Desk lamp",
+              description: "Brass-tone lamp",
+              category: "Home",
+              suggestedPrice: 20,
+              quantity: 1,
+              confidence: 0.8,
+              condition: "Check condition",
+              rationale: {
+                conditionNote: "x".repeat(250),
+                factors: [" Switch untested ", "", "a", "b", "c", "d"],
+              },
+              reasoning: "Test the switch.",
+            },
+          ],
+        }),
+      ),
+    );
+    const [item] = await scanPhoto(Buffer.from("jpeg"));
+    expect(item.priceRationale).toEqual({
+      assumedCondition: "Check condition",
+      conditionNote: "x".repeat(200),
+      factors: ["Switch untested", "a", "b", "c"],
+    });
   });
   it("reports refusals and unparseable output instead of inventing items", async () => {
     vi.stubEnv("ANTHROPIC_API_KEY", "test-key");

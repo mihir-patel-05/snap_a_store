@@ -10,6 +10,7 @@ import {
 } from "vitest";
 import { randomUUID, createHmac, scryptSync } from "node:crypto";
 import { fixtureItems } from "./fixtures/items";
+import type { StoreSnapshot } from "../lib/contracts";
 let handle: (r: Request) => Promise<Response>;
 let repo: typeof import("../lib/repo").repo;
 const url = "https://snap.example";
@@ -218,6 +219,14 @@ describe("production HTTP boundaries", () => {
     const text = await (await call(`/stores/${store.id}`)).text();
     expect(text).not.toContain(token);
     expect(text).not.toContain("token_hash");
+    // Claude's pricing notes stay with the seller.
+    expect(text).not.toContain("priceRationale");
+    const own = (await (
+      await call(`/stores/${store.id}`, undefined, token)
+    ).json()) as StoreSnapshot;
+    expect(own.items[0].priceRationale?.assumedCondition).toBe(
+      "Check condition",
+    );
   });
   it("blocks legacy sample stores instead of charging for invented listings", async () => {
     const { store } = setup();
