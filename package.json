@@ -14,7 +14,8 @@
     "check:config": "tsx scripts/check-config.ts",
     "check:services": "tsx scripts/check-services.ts",
     "maintenance": "node scripts/maintenance.mjs",
-    "backup": "node scripts/backup.mjs"
+    "backup": "node scripts/backup.mjs",
+    "assets:brand": "node scripts/build-brand-assets.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "latest",

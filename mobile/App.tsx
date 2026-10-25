@@ -778,6 +778,11 @@ function SellerApp() {
                 />
               </>
             )}
+            <Text style={[s.tiny, { textAlign: "center", marginTop: 20 }]}>
+              Google or Apple creates your own store. Connect your Square
+              account to accept payments. Existing sellers can still use their
+              password.
+            </Text>
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -790,12 +795,14 @@ function SellerApp() {
       >
         <View style={s.topBar}>
           <View style={s.brand}>
-            <View style={s.brandMark}>
-              <ScanLine size={22} color={C.paper} />
-            </View>
+            <Image
+              source={require("./assets/icon.png")}
+              style={s.brandMark}
+              accessibilityLabel="Snap-a-Store logo"
+            />
             <Text style={s.brandText}>
               snap<Text style={s.brandA}>a</Text>store
-              <Text style={{ color: C.orange }}>·</Text>
+              <Text style={{ color: C.orange }}>.</Text>
             </Text>
           </View>
           <Pressable
@@ -2103,7 +2110,12 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarText: { fontFamily: F.serif, fontSize: 18, lineHeight: 22, color: C.green },
+  avatarText: {
+    fontFamily: F.serif,
+    fontSize: 18,
+    lineHeight: 22,
+    color: C.green,
+  },
   scroll: { padding: 20, paddingTop: 24, paddingBottom: 40 },
   greetingRow: { gap: 14, marginBottom: 14 },
   eyebrow: {
@@ -2785,7 +2797,12 @@ const s = StyleSheet.create({
     paddingVertical: 10,
     minHeight: 50,
   },
-  fieldInput: { fontFamily: F.regular, fontSize: 17, lineHeight: 22, minWidth: 0 },
+  fieldInput: {
+    fontFamily: F.regular,
+    fontSize: 17,
+    lineHeight: 22,
+    minWidth: 0,
+  },
   dangerCard: { marginTop: 14, borderColor: "#edc8b8" },
   dangerBody: {
     fontFamily: F.regular,

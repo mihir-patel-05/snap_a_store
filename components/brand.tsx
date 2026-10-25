@@ -1,5 +1,4 @@
 import {
-  ScanLine,
   Coffee,
   LampDesk,
   BookOpen,
@@ -9,9 +8,13 @@ import {
 } from "lucide-react";
 export function Brand({ light = false }: { light?: boolean }) {
   return (
-    <a className={`brand ${light ? "light" : ""}`} href="/">
+    <a
+      className={`brand ${light ? "light" : ""}`}
+      href="/"
+      aria-label="Snap-a-Store home"
+    >
       <span className="brand-icon">
-        <ScanLine size={22} />
+        <img src="/icon.svg" alt="" width={37} height={37} />
       </span>
       snap<span className="brand-dot">a</span>store
       <span className="brand-period">.</span>

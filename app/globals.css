@@ -109,6 +109,11 @@ button {
   border-radius: 11px;
   margin-right: 10px;
 }
+.brand-icon img {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
 .brand-dot {
   font-size: 19px;
   font-weight: 450;
@@ -338,9 +343,6 @@ footer .brand-icon {
   width: 28px;
   height: 28px;
   border-radius: 8px;
-}
-footer .brand-icon svg {
-  width: 18px;
 }
 footer p,
 footer > span {
