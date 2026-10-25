@@ -28,7 +28,8 @@ import * as Haptics from "expo-haptics";
 import * as Clipboard from "expo-clipboard";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import QRCode from "react-native-qrcode-svg";
-import { googleSignIn } from "./lib/oauth";
+import { federatedSignIn } from "./lib/oauth";
+import Svg, { Path } from "react-native-svg";
 import { PaymentSetup } from "./components/payment-setup";
 import { ConvexClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
@@ -128,7 +129,11 @@ export default function App() {
   );
 }
 function SellerApp() {
-  const [methods, setMethods] = useState({ google: false, password: true });
+  const [methods, setMethods] = useState({
+    google: false,
+    apple: false,
+    password: true,
+  });
   const [tab, setTab] = useState<Tab>("home"),
     [session, setSession] = useState<Session | null>(null),
     [snapshot, setSnapshot] = useState<StoreSnapshot | null>(null),
@@ -230,7 +235,9 @@ function SellerApp() {
   }
   useEffect(() => {
     let active = true;
-    void api<{ google: boolean; password: boolean }>("/auth/methods")
+    void api<{ google: boolean; apple: boolean; password: boolean }>(
+      "/auth/methods",
+    )
       .then((m) => {
         if (active) setMethods(m);
       })
@@ -415,9 +422,10 @@ function SellerApp() {
       notify(`${gone.name} was deleted.`);
     });
   }
-  async function signInWithGoogle() {
-    await run("Signing in with Google", async () => {
-      const result = await googleSignIn();
+  async function signInWith(provider: "google" | "apple") {
+    const name = provider === "google" ? "Google" : "Apple";
+    await run(`Signing in with ${name}`, async () => {
+      const result = await federatedSignIn(provider);
       if (!result) return;
       const next = { token: result.token, store: result.store };
       await activate(next);
@@ -645,32 +653,6 @@ function SellerApp() {
               Sign in or create your own store to photograph, price, and sell
               your finds.
             </Text>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Continue with Google"
-              style={[
-                s.secondaryButton,
-                {
-                  backgroundColor: "#fff",
-                  borderColor: "#747775",
-                  flexDirection: "row",
-                  gap: 12,
-                  marginBottom: 20,
-                },
-              ]}
-              onPress={() => void signInWithGoogle()}
-              disabled={!!busy || !methods.google}
-            >
-              <Image
-                source={require("./assets/google.png")}
-                style={{ width: 20, height: 20 }}
-              />
-              <Text style={s.buttonDark}>
-                {methods.google
-                  ? "Continue with Google"
-                  : "Google sign-in unavailable"}
-              </Text>
-            </Pressable>
             {methods.password && (
               <View style={[s.settingCard, { marginBottom: 16 }]}>
                 <Text style={s.fieldLabel}>EMAIL</Text>
@@ -717,8 +699,73 @@ function SellerApp() {
                 disabled={!!busy || !email.trim() || !password}
               />
             )}
+            {methods.password && (
+              <Text
+                style={[
+                  s.tiny,
+                  { textAlign: "center", marginTop: 20, marginBottom: 12 },
+                ]}
+              >
+                or continue with
+              </Text>
+            )}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Continue with Google"
+              style={[
+                s.secondaryButton,
+                {
+                  backgroundColor: "#fff",
+                  borderColor: "#747775",
+                  flexDirection: "row",
+                  gap: 12,
+                  marginBottom: 20,
+                },
+              ]}
+              onPress={() => void signInWith("google")}
+              disabled={!!busy || !methods.google}
+            >
+              <Image
+                source={require("./assets/google.png")}
+                style={{ width: 20, height: 20 }}
+              />
+              <Text style={s.buttonDark}>
+                {methods.google
+                  ? "Continue with Google"
+                  : "Google sign-in unavailable"}
+              </Text>
+            </Pressable>
+            {methods.apple && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Continue with Apple"
+                style={[
+                  s.secondaryButton,
+                  {
+                    backgroundColor: "#000",
+                    borderColor: "#000",
+                    flexDirection: "row",
+                    gap: 12,
+                    marginTop: -8,
+                    marginBottom: 20,
+                  },
+                ]}
+                onPress={() => void signInWith("apple")}
+                disabled={!!busy}
+              >
+                <Svg width={17} height={20} viewBox="0 0 384 512">
+                  <Path
+                    fill="#fff"
+                    d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"
+                  />
+                </Svg>
+                <Text style={[s.buttonDark, { color: "#fff" }]}>
+                  Continue with Apple
+                </Text>
+              </Pressable>
+            )}
             <Text style={[s.tiny, { textAlign: "center", marginTop: 20 }]}>
-              Google creates your own store. Connect your Square account to
+              Google or Apple creates your own store. Connect your Square account to
               accept payments. Existing sellers can still use their password.
             </Text>
           </ScrollView>

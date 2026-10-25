@@ -1,5 +1,6 @@
 import { AppError, requireConfig } from "./errors";
 import type { Store } from "../contracts";
+import { APPLE_KEYS, applePrivateKey } from "./apple";
 
 export function paymentEnvironment(): "production" | "sandbox" {
   const value = process.env.SQUARE_ENVIRONMENT || "production";
@@ -137,13 +138,19 @@ export function requireDeploymentConfig() {
   const google = Boolean(
     process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_SECRET,
   );
-  if (!google) {
+  const apple = APPLE_KEYS.some((k) => process.env[k]);
+  if (!google && !apple) {
     requirePayments();
     return;
   }
+  if (google)
+    for (const key of ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"])
+      requireConfig(key);
+  if (apple) {
+    for (const key of APPLE_KEYS) requireConfig(key);
+    applePrivateKey();
+  }
   for (const key of [
-    "GOOGLE_CLIENT_ID",
-    "GOOGLE_CLIENT_SECRET",
     "SQUARE_APPLICATION_ID",
     "SQUARE_APPLICATION_SECRET",
     "SQUARE_WEBHOOK_SIGNATURE_KEY",
