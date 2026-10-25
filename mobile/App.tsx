@@ -1,3 +1,4 @@
+import { ProductEditor } from "./components/product-editor";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -48,7 +49,6 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
-  ChevronRight,
   CircleHelp,
   Coffee,
   ExternalLink,
@@ -60,6 +60,7 @@ import {
   Link2,
   Package,
   Plus,
+  Pencil,
   QrCode,
   ScanLine,
   Settings2,
@@ -131,6 +132,9 @@ function SellerApp() {
   const [tab, setTab] = useState<Tab>("home"),
     [session, setSession] = useState<Session | null>(null),
     [snapshot, setSnapshot] = useState<StoreSnapshot | null>(null),
+    [editingItem, setEditingItem] = useState<
+      StoreSnapshot["items"][number] | null
+    >(null),
     [drafts, setDrafts] = useState<DraftItem[]>([]),
     [publishLocked, setPublishLocked] = useState(false),
     [photo, setPhoto] = useState<string | null>(null),
@@ -157,6 +161,9 @@ function SellerApp() {
       rows: Comparison[];
       note: string;
     } | null>(null);
+  useEffect(() => {
+    setEditingItem(null);
+  }, [session?.store.id]);
   const publishKey = useRef(""),
     storeKey = useRef(""),
     activeStore = useRef(""),
@@ -1143,7 +1150,7 @@ function SellerApp() {
                     <InventoryRow
                       key={i.id}
                       item={i}
-                      onPress={() => void Linking.openURL(storeUrl)}
+                      onPress={() => setEditingItem(i)}
                     />
                   ))}
                 </>
@@ -1253,7 +1260,7 @@ function SellerApp() {
                       <InventoryRow
                         key={i.id}
                         item={i}
-                        onPress={() => void Linking.openURL(storeUrl)}
+                        onPress={() => setEditingItem(i)}
                       />
                     ))}
                   {snapshot!.activity.length > 0 && (
@@ -1528,6 +1535,20 @@ function SellerApp() {
               <Text style={s.tiny}>A little care goes a long way.</Text>
             </View>
           </View>
+        )}
+        {editingItem && session && (
+          <ProductEditor
+            key={editingItem.id}
+            item={editingItem}
+            token={session.token}
+            onClose={() => setEditingItem(null)}
+            onSaved={(next) => {
+              setSnapshot(next);
+              setEditingItem(null);
+              notify("Product updated.");
+              void loadStores(session.token);
+            }}
+          />
         )}
         <Modal
           transparent
@@ -1976,7 +1997,12 @@ function InventoryRow({
   onPress: () => void;
 }) {
   return (
-    <Pressable style={s.inventoryRow} onPress={onPress}>
+    <Pressable
+      style={s.inventoryRow}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Edit ${item.name}`}
+    >
       <Art name={item.name} category={item.category} photoId={item.photoId} />
       <View style={s.flex}>
         <Text style={s.inventoryName}>{item.name}</Text>
@@ -1988,14 +2014,16 @@ function InventoryRow({
             ]}
           />
           <Text style={s.tiny}>
-            {!item.remaining
-              ? "Found a new home"
-              : `${item.available} available${item.remaining > item.available ? " · checkout in progress" : ""}`}
+            {item.editing
+              ? "Saving changes · tap to finish"
+              : !item.remaining
+                ? "Found a new home"
+                : `${item.available} available${item.remaining > item.available ? " · checkout in progress" : ""}`}
           </Text>
         </View>
       </View>
       <Text style={s.inventoryPrice}>{money(item.price)}</Text>
-      <ChevronRight size={18} color={C.quiet} />
+      <Pencil size={18} color={C.green} />
     </Pressable>
   );
 }

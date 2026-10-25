@@ -2,6 +2,14 @@
 
 Checked October 24, 2026, using Node 22.22.2. This is evidence of the checks below, not certification of an unconfigured deployment.
 
+## Saved-product editing (October 24, 2026, Node 22.22.2)
+
+- All 85 tests in 9 files pass. Seven new tests cover owner-only edits, validation, Square object/version preservation, immutable checkout prices, reservation limits, concurrent payment completion, durable retries, stale edits, sold-out status, and restocking.
+- Root and native TypeScript checks pass. The optimized Next.js build and Expo exports for iOS, Android, and web pass.
+- Headless Chrome at 390×844 exercises both the web dashboard and Expo web editor: cancel discards changes, reopening restores saved values, all six editable fields reach the save request, and a successful save immediately updates the collection. No JavaScript exceptions or horizontal overflow. Editor screenshots were visually inspected.
+- UI checks use an isolated temporary database/login and intercept edit responses; the real API handler and SQLite persistence are covered separately with Square mocked at the provider boundary. Run `scripts/product-edit-smoke.mjs` with `SMOKE_URL`, `NATIVE_SMOKE_URL`, `SMOKE_STORE_ID`, `SMOKE_EMAIL`, and `SMOKE_PASSWORD` pointing to an isolated test environment.
+- No live catalog mutations, production deployment, signed native build, or physical-device check was performed for this change. Existing deployments create the `item_edits` table automatically at startup.
+
 ## Merge with Google sign-in and seller Square accounts (October 25, 2026, Node 22.22.0)
 
 - Storefronts are now owned per account: each Google seller (by subject and environment) or the password seller (per Square environment and location). Before this merge, any valid session could manage every storefront; with public Google signup that would have crossed sellers.

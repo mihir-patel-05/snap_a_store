@@ -86,6 +86,100 @@ export async function createCatalog(items: Item[], key: string) {
     return { ...i, catalogId, variationId };
   });
 }
+type CatalogItem = {
+  id: string;
+  type: string;
+  version: number;
+  is_deleted?: boolean;
+  item_data: {
+    [key: string]: unknown;
+    variations: {
+      id: string;
+      type: string;
+      version: number;
+      item_variation_data: { [key: string]: unknown };
+    }[];
+  };
+};
+// Square uses full replacement. Fetch and retain the existing object/version,
+// other variations, taxes and modifiers; change only our listing fields.
+export async function prepareCatalogEdit(
+  item: Item,
+  key: string,
+): Promise<Record<string, unknown>> {
+  if (!item.catalogId || !item.variationId)
+    throw new AppError(
+      409,
+      "This product is missing its Square catalog connection.",
+    );
+  const { object } = await square<{ object: CatalogItem }>(
+    `/catalog/object/${encodeURIComponent(item.catalogId)}`,
+    undefined,
+    "GET",
+    item.storeId,
+  );
+  if (
+    !object ||
+    object.id !== item.catalogId ||
+    object.type !== "ITEM" ||
+    object.is_deleted ||
+    !object.version ||
+    !Array.isArray(object.item_data?.variations) ||
+    !object.item_data.variations.some(
+      (v) =>
+        v.id === item.variationId && v.type === "ITEM_VARIATION" && v.version,
+    )
+  )
+    throw new AppError(
+      502,
+      "Square could not load this product for editing. Retry saving.",
+    );
+  const { description_html, description_plaintext, ...details } =
+    object.item_data;
+  return {
+    idempotency_key: key,
+    object: {
+      ...object,
+      item_data: {
+        ...details,
+        name: item.name,
+        description: item.description,
+        variations: object.item_data.variations.map((v) =>
+          v.id !== item.variationId
+            ? v
+            : {
+                ...v,
+                item_variation_data: {
+                  ...v.item_variation_data,
+                  pricing_type: "FIXED_PRICING",
+                  price_money: {
+                    amount: Math.round(item.price * 100),
+                    currency: "USD",
+                  },
+                },
+              },
+        ),
+      },
+    },
+  };
+}
+export async function updateCatalogItem(
+  request: Record<string, unknown>,
+  item: Item,
+) {
+  const result = await square<{ catalog_object?: { id: string } }>(
+    "/catalog/object",
+    request,
+    "POST",
+    item.storeId,
+  );
+  if (result.catalog_object?.id !== item.catalogId)
+    throw new AppError(
+      502,
+      "Square did not confirm the updated product. Retry saving the same changes.",
+    );
+}
+
 // Deleting an item also deletes its variations. Square reports partial success
 // for objects that are already gone, so a retry after a timeout is safe.
 export async function deleteCatalog(ids: string[], storeId: string) {
