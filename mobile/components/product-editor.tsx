@@ -27,6 +27,7 @@ const categories: Item["category"][] = [
   "Other",
 ];
 import { api } from "../lib/api";
+import { C, F, R, T } from "../lib/theme";
 
 export function ProductEditor({
   item,
@@ -130,21 +131,26 @@ export function ProductEditor({
             contentContainerStyle={s.content}
             keyboardShouldPersistTaps="handled"
           >
-            <View style={s.row}>
-              <Text style={s.title}>Edit product</Text>
+            <View style={s.header}>
+              <Text style={s.eyebrow}>A LITTLE TOUCH-UP</Text>
               <Pressable
                 accessibilityRole="button"
+                accessibilityLabel="Close"
                 disabled={busy}
                 onPress={onClose}
+                style={s.close}
               >
                 <Text style={s.link}>Close</Text>
               </Pressable>
             </View>
+            <Text style={s.title}>
+              Edit this<Text style={s.italic}> find.</Text>
+            </Text>
             <Text style={s.note}>
               Changes update your storefront and Square catalog. Open checkouts
               keep their original price.
             </Text>
-            <Text style={s.label}>Product name</Text>
+            <Text style={s.label}>PRODUCT NAME</Text>
             <TextInput
               style={s.input}
               accessibilityLabel="Product name"
@@ -153,7 +159,7 @@ export function ProductEditor({
               editable={editable}
               onChangeText={setName}
             />
-            <Text style={s.label}>Description</Text>
+            <Text style={s.label}>DESCRIPTION</Text>
             <TextInput
               style={[s.input, s.description]}
               accessibilityLabel="Description"
@@ -165,7 +171,7 @@ export function ProductEditor({
             />
             <View style={s.row}>
               <View style={s.field}>
-                <Text style={s.label}>Price ($)</Text>
+                <Text style={s.label}>PRICE ($)</Text>
                 <TextInput
                   style={s.input}
                   accessibilityLabel="Price"
@@ -176,7 +182,7 @@ export function ProductEditor({
                 />
               </View>
               <View style={s.field}>
-                <Text style={s.label}>Unsold stock</Text>
+                <Text style={s.label}>UNSOLD STOCK</Text>
                 <TextInput
                   style={s.input}
                   accessibilityLabel="Unsold stock"
@@ -191,7 +197,7 @@ export function ProductEditor({
               Stock includes units reserved by buyers. Set 0 to mark the product
               sold out.
             </Text>
-            <Text style={s.label}>Condition</Text>
+            <Text style={s.label}>CONDITION</Text>
             <View style={s.choices}>
               {conditions.map((c) => (
                 <Pressable
@@ -202,11 +208,15 @@ export function ProductEditor({
                   onPress={() => setCondition(c)}
                   style={[s.choice, c === condition && s.selected]}
                 >
-                  <Text style={s.link}>{c}</Text>
+                  <Text
+                    style={[s.choiceText, c === condition && s.choiceTextOn]}
+                  >
+                    {c}
+                  </Text>
                 </Pressable>
               ))}
             </View>
-            <Text style={s.label}>Category</Text>
+            <Text style={s.label}>CATEGORY</Text>
             <View style={s.choices}>
               {categories.map((c) => (
                 <Pressable
@@ -217,7 +227,11 @@ export function ProductEditor({
                   onPress={() => setCategory(c)}
                   style={[s.choice, c === category && s.selected]}
                 >
-                  <Text style={s.link}>{c}</Text>
+                  <Text
+                    style={[s.choiceText, c === category && s.choiceTextOn]}
+                  >
+                    {c}
+                  </Text>
                 </Pressable>
               ))}
             </View>
@@ -257,45 +271,90 @@ export function ProductEditor({
   );
 }
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#f8f7f1" },
-  content: { padding: 24, gap: 12 },
-  title: { color: "#193d33", fontSize: 28, fontWeight: "700", flex: 1 },
-  row: { flexDirection: "row", alignItems: "center", gap: 16 },
-  field: { flex: 1, gap: 8 },
-  label: { color: "#193d33", fontSize: 15, fontWeight: "600", marginTop: 8 },
-  input: {
-    borderWidth: 1,
-    borderColor: "#d5dccd",
-    borderRadius: 12,
-    backgroundColor: "white",
-    color: "#193d33",
-    padding: 14,
-    fontSize: 16,
+  safe: { flex: 1, backgroundColor: C.paper },
+  content: { padding: 20, paddingTop: 16, paddingBottom: 40, gap: 12 },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 16,
+    minHeight: 44,
   },
-  description: { minHeight: 96, textAlignVertical: "top" },
-  note: { fontSize: 13, color: "#65715f", lineHeight: 20 },
+  eyebrow: {
+    fontFamily: F.semi,
+    ...T.caption,
+    letterSpacing: 1.3,
+    color: C.muted,
+  },
+  close: { minHeight: 44, justifyContent: "center", paddingHorizontal: 4 },
+  title: {
+    fontFamily: F.serif,
+    fontSize: 32,
+    lineHeight: 38,
+    letterSpacing: -0.9,
+    color: C.ink,
+  },
+  italic: { fontFamily: F.italic, color: C.moss },
+  row: { flexDirection: "row", alignItems: "center", gap: 14 },
+  field: { flex: 1, gap: 8 },
+  label: {
+    fontFamily: F.semi,
+    ...T.caption,
+    letterSpacing: 1,
+    color: C.muted,
+    marginTop: 8,
+  },
+  input: {
+    fontFamily: F.regular,
+    ...T.body,
+    borderWidth: 1,
+    borderColor: C.line,
+    borderRadius: R.sm,
+    backgroundColor: "white",
+    color: C.ink,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    minHeight: 52,
+  },
+  description: { minHeight: 104, textAlignVertical: "top" },
+  note: {
+    fontFamily: F.regular,
+    ...T.subhead,
+    lineHeight: 21,
+    color: C.muted,
+  },
   choices: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
   choice: {
-    padding: 11,
     borderWidth: 1,
-    borderColor: "#d5dccd",
-    borderRadius: 10,
+    borderColor: C.line,
+    borderRadius: R.pill,
+    paddingHorizontal: 14,
+    minHeight: 40,
+    justifyContent: "center",
+    backgroundColor: "white",
   },
-  selected: { backgroundColor: "#d9ef9b", borderColor: "#193d33" },
-  link: { color: "#193d33", fontWeight: "600" },
+  selected: { backgroundColor: C.green, borderColor: C.green },
+  choiceText: { fontFamily: F.medium, ...T.subhead, color: C.ink },
+  choiceTextOn: { color: "white" },
+  link: { fontFamily: F.semi, ...T.subhead, color: C.green },
   error: {
-    color: "#9e3a24",
-    backgroundColor: "#fbe8dd",
+    fontFamily: F.regular,
+    ...T.subhead,
+    lineHeight: 21,
+    color: C.errorInk,
+    backgroundColor: C.errorBg,
     padding: 14,
-    borderRadius: 10,
+    borderRadius: R.sm,
   },
   save: {
-    backgroundColor: "#193d33",
-    padding: 17,
+    backgroundColor: C.green,
+    minHeight: 56,
+    padding: 16,
     borderRadius: 14,
     alignItems: "center",
+    justifyContent: "center",
     marginTop: 10,
   },
-  saveText: { color: "white", fontWeight: "700", fontSize: 16 },
-  cancel: { padding: 12, alignItems: "center" },
+  saveText: { fontFamily: F.semi, ...T.headline, color: "white" },
+  cancel: { minHeight: 48, padding: 12, alignItems: "center" },
 });
