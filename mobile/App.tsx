@@ -1488,6 +1488,30 @@ function SellerApp() {
               selected={tab === "connections"}
               onPress={() => setTab("connections")}
             />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Storefront: ${session.store.name}. Switch or add a storefront`}
+              accessibilityState={{ expanded: storesOpen }}
+              onPress={() => {
+                setStoresOpen(true);
+                void loadStores(session.token);
+              }}
+              disabled={!!busy}
+              style={s.navItem}
+            >
+              <View style={[s.navIconWrap, storesOpen && s.navIconWrapOn]}>
+                <View style={[s.navAvatar, storesOpen && s.navAvatarOn]}>
+                  <Text
+                    style={[s.navAvatarText, storesOpen && { color: C.paper }]}
+                  >
+                    {session.store.name.slice(0, 1)}
+                  </Text>
+                </View>
+              </View>
+              <Text style={[s.navLabel, storesOpen && s.navLabelOn]}>
+                Switch
+              </Text>
+            </Pressable>
           </View>
         )}
         {!!toast && (
@@ -2272,18 +2296,36 @@ const s = StyleSheet.create({
     justifyContent: "space-around",
     paddingTop: 8,
     paddingBottom: Platform.OS === "ios" ? 28 : 12,
-    paddingHorizontal: 12,
+    paddingHorizontal: 6,
     borderTopWidth: 1,
     borderTopColor: C.line,
     backgroundColor: C.paper,
-    gap: 8,
+    gap: 2,
   },
   navItem: {
+    flex: 1,
+    minWidth: 0,
     alignItems: "center",
     justifyContent: "center",
     gap: 4,
-    minWidth: 64,
     minHeight: 52,
+  },
+  navAvatar: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: "#e7ebdc",
+    borderWidth: 1,
+    borderColor: C.sageLine,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  navAvatarOn: { backgroundColor: C.green, borderColor: C.green },
+  navAvatarText: {
+    fontFamily: F.serif,
+    fontSize: 14,
+    lineHeight: 17,
+    color: C.green,
   },
   navIconWrap: {
     width: 56,
@@ -2293,11 +2335,17 @@ const s = StyleSheet.create({
     justifyContent: "center",
   },
   navIconWrapOn: { backgroundColor: C.sage },
-  navLabel: { fontFamily: F.medium, ...T.caption, color: C.muted },
+  navLabel: {
+    fontFamily: F.medium,
+    ...T.caption,
+    color: C.muted,
+    textAlign: "center",
+  },
   navLabelOn: { color: C.green, fontFamily: F.semi },
   scanNav: {
     height: 56,
-    width: 64,
+    width: 62,
+    flexShrink: 0,
     borderRadius: 20,
     alignItems: "center",
     justifyContent: "center",
