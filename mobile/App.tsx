@@ -118,7 +118,7 @@ export default function App() {
           justifyContent: "center",
         }}
       >
-        <ActivityIndicator color={C.green} />
+        <ActivityIndicator color={C.denim} />
       </View>
     );
   return (
@@ -625,7 +625,7 @@ function SellerApp() {
       <SafeAreaView
         style={[s.safe, { justifyContent: "center", alignItems: "center" }]}
       >
-        <ActivityIndicator color={C.green} />
+        <ActivityIndicator color={C.denim} />
       </SafeAreaView>
     );
   if (!session)
@@ -643,7 +643,7 @@ function SellerApp() {
             ]}
           >
             <View style={[s.emptyIcon, { marginBottom: 24 }]}>
-              <StoreIcon size={40} color={C.green} />
+              <StoreIcon size={40} color={C.denim} />
             </View>
             <Eyebrow text="YOUR BUSINESS, WITH YOU" />
             <Text style={s.title}>
@@ -785,7 +785,7 @@ function SellerApp() {
             </View>
             <Text style={s.brandText}>
               snap<Text style={s.brandA}>a</Text>store
-              <Text style={{ color: C.orange }}>·</Text>
+              <Text style={{ color: C.clay }}>·</Text>
             </Text>
           </View>
           <Pressable
@@ -814,7 +814,7 @@ function SellerApp() {
           refreshControl={
             <RefreshControl
               refreshing={busy === "Refreshing your store"}
-              tintColor={C.green}
+              tintColor={C.denim}
               onRefresh={() =>
                 void run("Refreshing your store", () => refresh())
               }
@@ -850,7 +850,7 @@ function SellerApp() {
                   onPress={() => setTab("connections")}
                 >
                   <Text style={s.smallBold}>Set up payments</Text>
-                  <ArrowRight size={18} color={C.green} />
+                  <ArrowRight size={18} color={C.denim} />
                 </Pressable>
               </View>
             )}
@@ -868,7 +868,7 @@ function SellerApp() {
                 AI made a first pass. You make the final call.
               </Text>
               <View style={s.reviewNotice}>
-                <Sparkles size={20} color={C.green} />
+                <Sparkles size={20} color={C.denim} />
                 <Text style={s.noticeText}>
                   Identified with Claude. Review every name, price, and
                   quantity. Estimates are a starting point.
@@ -904,7 +904,7 @@ function SellerApp() {
                             s.dot,
                             {
                               backgroundColor:
-                                d.confidence < 0.75 ? C.orange : C.leaf,
+                                d.confidence < 0.75 ? C.clay : C.live,
                             },
                           ]}
                         />
@@ -1025,9 +1025,9 @@ function SellerApp() {
                   >
                     <Text style={s.smallBold}>Why this price?</Text>
                     {whyOpen.includes(d.id) ? (
-                      <ChevronUp size={15} color={C.green} />
+                      <ChevronUp size={15} color={C.denim} />
                     ) : (
-                      <ChevronDown size={15} color={C.green} />
+                      <ChevronDown size={15} color={C.denim} />
                     )}
                   </Pressable>
                   {whyOpen.includes(d.id) && (
@@ -1067,7 +1067,7 @@ function SellerApp() {
                                   <Text style={s.comparisonPrice}>
                                     {money(c.price)}
                                   </Text>
-                                  <ArrowUpRight size={15} color={C.green} />
+                                  <ArrowUpRight size={15} color={C.denim} />
                                 </Pressable>
                               ))}
                             </>
@@ -1106,7 +1106,7 @@ function SellerApp() {
               <View style={s.greetingRow}>
                 <Eyebrow text="YOUR NEXT LITTLE BEGINNING" />
                 <View style={s.dayBadge}>
-                  <Leaf size={14} color={C.green} />
+                  <Leaf size={14} color={C.denim} />
                   <Text style={s.badgeText}>Pre-loved. Re-loved.</Text>
                 </View>
               </View>
@@ -1129,7 +1129,7 @@ function SellerApp() {
                 </View>
                 <View style={s.heroCopy}>
                   <View style={s.heroPill}>
-                    <Sparkles size={14} color={C.green} />
+                    <Sparkles size={14} color={C.denim} />
                     <Text style={s.heroEyebrow}>FROM TABLE TO STOREFRONT</Text>
                   </View>
                   <Text style={s.heroTitle}>
@@ -1169,7 +1169,7 @@ function SellerApp() {
                   </Text>
                   <Text style={s.statCaption}>A little good adds up</Text>
                 </View>
-                <View style={[s.stat, { backgroundColor: "#edf0e2" }]}>
+                <View style={[s.stat, { backgroundColor: C.stone }]}>
                   <View style={s.statLabel}>
                     <Leaf size={16} color={C.muted} />
                     <Text style={s.tiny}>New homes found</Text>
@@ -1213,7 +1213,7 @@ function SellerApp() {
                     ].map((step, i) => (
                       <View style={s.howStep} key={step.title}>
                         <View style={s.howIcon}>
-                          <step.icon size={22} color={C.green} />
+                          <step.icon size={22} color={C.denim} />
                         </View>
                         <Text style={s.howTitle}>
                           {String(i + 1).padStart(2, "0")} {step.title}
@@ -1225,7 +1225,7 @@ function SellerApp() {
                 </View>
               )}
               <View style={s.earthNote}>
-                <Leaf size={20} color={C.moss} />
+                <Leaf size={20} color={C.brass} />
                 <Text style={s.earthText}>
                   Good things deserve a next chapter.
                 </Text>
@@ -1259,11 +1259,11 @@ function SellerApp() {
                         style={s.smallButton}
                         onPress={() => setQr(true)}
                       >
-                        <QrCode size={17} color={C.green} />
+                        <QrCode size={17} color={C.denim} />
                         <Text style={s.smallBold}>Show QR</Text>
                       </Pressable>
                       <Pressable
-                        style={[s.smallButton, { backgroundColor: C.green }]}
+                        style={[s.smallButton, { backgroundColor: C.denim }]}
                         onPress={() => void share()}
                       >
                         <Share2 size={16} color="white" />
@@ -1286,7 +1286,7 @@ function SellerApp() {
                       onPress={() => setCapture(true)}
                       style={s.addLink}
                     >
-                      <Plus size={16} color={C.green} />
+                      <Plus size={16} color={C.denim} />
                       <Text style={s.smallBold}>Add finds</Text>
                     </Pressable>
                   </View>
@@ -1321,7 +1321,7 @@ function SellerApp() {
                       {snapshot!.activity.slice(0, 5).map((a) => (
                         <View key={a.id} style={s.activity}>
                           <View style={s.activityIcon}>
-                            <ArrowDownLeft size={18} color={C.green} />
+                            <ArrowDownLeft size={18} color={C.denim} />
                           </View>
                           <View style={s.flex}>
                             <Text style={s.activityText}>{a.message}</Text>
@@ -1340,7 +1340,7 @@ function SellerApp() {
               ) : (
                 <View style={s.empty}>
                   <View style={s.emptyIcon}>
-                    <StoreIcon size={38} color={C.green} />
+                    <StoreIcon size={38} color={C.denim} />
                   </View>
                   <Text style={s.emptyTitle}>Something good starts here.</Text>
                   <Text style={s.emptyBody}>
@@ -1390,7 +1390,7 @@ function SellerApp() {
                   disabled={!!busy || name.trim().length < 2}
                 >
                   <Text style={s.smallBold}>Save name</Text>
-                  <Check size={16} color={C.green} />
+                  <Check size={16} color={C.denim} />
                 </Pressable>
               </View>
               <View style={[s.settingCard, s.dangerCard]}>
@@ -1418,7 +1418,7 @@ function SellerApp() {
               </View>
               <View style={s.sectionRow}>
                 <Text style={s.sectionTitle}>Your store’s superpowers</Text>
-                <Zap size={20} color={C.orange} />
+                <Zap size={20} color={C.clay} />
               </View>
               {integrations.map((integration, i) => {
                 if (
@@ -1438,10 +1438,10 @@ function SellerApp() {
                         {
                           backgroundColor: [
                             "#f1dfd3",
-                            "#e0e8e1",
-                            "#e7eccf",
-                            "#e5e0ed",
-                            "#f1e4cf",
+                            "#e3e8f0",
+                            "#ebe5d8",
+                            "#e8e1ee",
+                            "#f3e6c9",
                           ][i],
                         },
                       ]}
@@ -1459,7 +1459,7 @@ function SellerApp() {
                             {
                               color:
                                 integration.status === "ready"
-                                  ? "#58783e"
+                                  ? C.live
                                   : C.muted,
                             },
                           ]}
@@ -1489,7 +1489,7 @@ function SellerApp() {
                 />
               )}
               <View style={s.privacyCard}>
-                <ShieldCheck size={22} color={C.green} />
+                <ShieldCheck size={22} color={C.denim} />
                 <View style={s.flex}>
                   <Text style={s.smallBold}>Your decisions. Always.</Text>
                   <Text style={s.privacyText}>
@@ -1576,7 +1576,7 @@ function SellerApp() {
         {!!busy && (
           <View style={s.busyOverlay}>
             <View style={s.busyCard}>
-              <ActivityIndicator color={C.green} size="large" />
+              <ActivityIndicator color={C.denim} size="large" />
               <Text style={s.busyTitle}>{busy}…</Text>
               <Text style={s.tiny}>A little care goes a long way.</Text>
             </View>
@@ -1627,7 +1627,7 @@ function SellerApp() {
                 style={s.secondaryButton}
                 onPress={() => void pick(false)}
               >
-                <ImagePlus size={19} color={C.green} />
+                <ImagePlus size={19} color={C.denim} />
                 <Text style={s.buttonDark}>Choose from photos</Text>
               </Pressable>
             </View>
@@ -1678,8 +1678,8 @@ function SellerApp() {
                           style={[
                             s.avatar,
                             open && {
-                              backgroundColor: C.green,
-                              borderColor: C.green,
+                              backgroundColor: C.denim,
+                              borderColor: C.denim,
                             },
                           ]}
                         >
@@ -1703,7 +1703,7 @@ function SellerApp() {
                                 : "No finds yet"}
                           </Text>
                         </View>
-                        {open && <Check size={18} color={C.green} />}
+                        {open && <Check size={18} color={C.denim} />}
                       </Pressable>
                     );
                   })}
@@ -1821,7 +1821,7 @@ function SellerApp() {
                 <X size={22} color={C.muted} />
               </Pressable>
               <View style={s.qrLeaf}>
-                <Leaf size={25} color={C.green} />
+                <Leaf size={25} color={C.denim} />
               </View>
               <Eyebrow text="YOU’RE OPEN FOR GOOD" />
               <Text style={s.qrTitle}>{snapshot?.store.name || name}</Text>
@@ -1850,7 +1850,7 @@ function SellerApp() {
                   )
                 }
               >
-                <Link2 size={16} color={C.green} />
+                <Link2 size={16} color={C.denim} />
                 <Text style={s.smallBold}>Copy store link</Text>
               </Pressable>
               <Text style={s.qrNetwork}>
@@ -1915,7 +1915,7 @@ function Nav({
       <View style={[s.navIconWrap, selected && s.navIconWrapOn]}>
         <Icon
           size={22}
-          color={selected ? C.green : C.muted}
+          color={selected ? C.denim : C.muted}
           strokeWidth={selected ? 2.1 : 1.7}
         />
       </View>
@@ -1958,7 +1958,7 @@ function Art({
         ? "#eee7d2"
         : Icon === BookOpen
           ? "#ecdfd4"
-          : "#e1e7d8";
+          : C.wash;
   return (
     <View
       style={{
@@ -1974,7 +1974,7 @@ function Art({
         size={size * 0.5}
         strokeWidth={1.35}
         color={
-          Icon === Coffee ? "#678a9b" : Icon === LampDesk ? "#ac8f55" : C.green
+          Icon === Coffee ? "#678a9b" : Icon === LampDesk ? "#ac8f55" : C.denim
         }
       />
     </View>
@@ -2001,7 +2001,7 @@ function InventoryRow({
           <View
             style={[
               s.dot,
-              { backgroundColor: !item.remaining ? C.quiet : C.orange },
+              { backgroundColor: !item.remaining ? C.quiet : C.clay },
             ]}
           />
           <Text style={s.tiny}>
@@ -2014,7 +2014,7 @@ function InventoryRow({
         </View>
       </View>
       <Text style={s.inventoryPrice}>{money(item.price)}</Text>
-      <Pencil size={18} color={C.green} />
+      <Pencil size={18} color={C.denim} />
     </Pressable>
   );
 }
@@ -2064,7 +2064,7 @@ const s = StyleSheet.create({
     borderColor: "transparent",
     marginBottom: 6,
   },
-  storeRowOpen: { backgroundColor: C.sage, borderColor: C.sageLine },
+  storeRowOpen: { backgroundColor: C.wash, borderColor: "#cfd8e6" },
   storeRowName: {
     fontFamily: F.semi,
     ...T.headline,
@@ -2092,13 +2092,13 @@ const s = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: "#e7ebdc",
+    backgroundColor: C.stone,
     borderWidth: 1,
-    borderColor: C.sageLine,
+    borderColor: C.stoneLine,
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarText: { fontFamily: F.serif, fontSize: 18, lineHeight: 22, color: C.green },
+  avatarText: { fontFamily: F.serif, fontSize: 18, lineHeight: 22, color: C.denim },
   scroll: { padding: 20, paddingTop: 24, paddingBottom: 40 },
   greetingRow: { gap: 14, marginBottom: 14 },
   eyebrow: {
@@ -2112,13 +2112,13 @@ const s = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: "#edf0e4",
+    backgroundColor: C.stone,
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: R.pill,
     minHeight: 30,
   },
-  badgeText: { fontFamily: F.medium, ...T.footnote, color: C.green },
+  badgeText: { fontFamily: F.medium, ...T.footnote, color: C.denim },
   title: {
     fontFamily: F.serif,
     fontSize: 36,
@@ -2127,7 +2127,7 @@ const s = StyleSheet.create({
     color: C.ink,
     marginTop: 6,
   },
-  italic: { fontFamily: F.italic, color: C.moss },
+  italic: { fontFamily: F.italic, color: C.brass },
   subtitle: {
     fontFamily: F.regular,
     ...T.callout,
@@ -2139,9 +2139,9 @@ const s = StyleSheet.create({
   hero: {
     borderRadius: R.lg,
     overflow: "hidden",
-    backgroundColor: "#e9edde",
+    backgroundColor: C.stone,
     borderWidth: 1,
-    borderColor: "#e2e6d6",
+    borderColor: C.stoneLine,
   },
   heroPhoto: { width: "100%", height: 196, resizeMode: "cover" },
   photoTag: {
@@ -2151,7 +2151,7 @@ const s = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: "#fffdf3e8",
+    backgroundColor: "#fffdf8e8",
     borderRadius: R.pill,
     paddingVertical: 7,
     paddingHorizontal: 12,
@@ -2164,7 +2164,7 @@ const s = StyleSheet.create({
     fontFamily: F.semi,
     ...T.caption,
     letterSpacing: 1.2,
-    color: C.green,
+    color: C.denim,
   },
   heroTitle: {
     fontFamily: F.serif,
@@ -2183,7 +2183,7 @@ const s = StyleSheet.create({
     marginBottom: 22,
   },
   button: {
-    backgroundColor: C.green,
+    backgroundColor: C.denim,
     minHeight: 56,
     paddingVertical: 16,
     paddingHorizontal: 22,
@@ -2194,7 +2194,7 @@ const s = StyleSheet.create({
     gap: 10,
   },
   buttonText: { fontFamily: F.semi, ...T.headline, color: "white" },
-  buttonDark: { fontFamily: F.semi, ...T.headline, color: C.green },
+  buttonDark: { fontFamily: F.semi, ...T.headline, color: C.denim },
   secondaryAction: {
     flexDirection: "row",
     justifyContent: "center",
@@ -2204,7 +2204,7 @@ const s = StyleSheet.create({
     marginTop: 2,
     minHeight: 48,
   },
-  smallBold: { fontFamily: F.semi, ...T.subhead, color: C.green },
+  smallBold: { fontFamily: F.semi, ...T.subhead, color: C.denim },
   sectionRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -2227,10 +2227,10 @@ const s = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 10,
     borderRadius: R.pill,
-    backgroundColor: "#edf0e5",
+    backgroundColor: C.stone,
     minHeight: 30,
   },
-  dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: C.leaf },
+  dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: C.live },
   tiny: { fontFamily: F.regular, ...T.footnote, color: C.muted },
   statsRow: { flexDirection: "row", gap: 12 },
   stat: {
@@ -2276,7 +2276,7 @@ const s = StyleSheet.create({
     borderRadius: R.md,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: C.sage,
+    backgroundColor: C.stone,
     marginBottom: 12,
   },
   howTitle: {
@@ -2306,7 +2306,7 @@ const s = StyleSheet.create({
     fontFamily: F.italic,
     fontSize: 18,
     lineHeight: 24,
-    color: C.moss,
+    color: C.brass,
     flexShrink: 1,
   },
   nav: {
@@ -2333,18 +2333,18 @@ const s = StyleSheet.create({
     width: 26,
     height: 26,
     borderRadius: 13,
-    backgroundColor: "#e7ebdc",
+    backgroundColor: C.stone,
     borderWidth: 1,
-    borderColor: C.sageLine,
+    borderColor: C.stoneLine,
     alignItems: "center",
     justifyContent: "center",
   },
-  navAvatarOn: { backgroundColor: C.green, borderColor: C.green },
+  navAvatarOn: { backgroundColor: C.denim, borderColor: C.denim },
   navAvatarText: {
     fontFamily: F.serif,
     fontSize: 14,
     lineHeight: 17,
-    color: C.green,
+    color: C.denim,
   },
   navIconWrap: {
     width: 56,
@@ -2353,14 +2353,14 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  navIconWrapOn: { backgroundColor: C.sage },
+  navIconWrapOn: { backgroundColor: C.wash },
   navLabel: {
     fontFamily: F.medium,
     ...T.caption,
     color: C.muted,
     textAlign: "center",
   },
-  navLabelOn: { color: C.green, fontFamily: F.semi },
+  navLabelOn: { color: C.denim, fontFamily: F.semi },
   scanNav: {
     height: 56,
     width: 62,
@@ -2368,10 +2368,10 @@ const s = StyleSheet.create({
     borderRadius: 20,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: C.green,
+    backgroundColor: C.denim,
     marginTop: -16,
     marginBottom: 4,
-    boxShadow: "0 6px 14px #193d3326",
+    boxShadow: "0 6px 14px #26231f26",
   },
   error: {
     flexDirection: "row",
@@ -2412,7 +2412,7 @@ const s = StyleSheet.create({
   busyOverlay: {
     position: "absolute",
     inset: 0,
-    backgroundColor: "#f8f7f1d9",
+    backgroundColor: "#f5f1e8d9",
     alignItems: "center",
     justifyContent: "center",
     zIndex: 10,
@@ -2448,7 +2448,7 @@ const s = StyleSheet.create({
     gap: 12,
     padding: 16,
     borderRadius: R.md,
-    backgroundColor: C.sage,
+    backgroundColor: C.stone,
     marginBottom: 20,
   },
   noticeText: {
@@ -2456,7 +2456,7 @@ const s = StyleSheet.create({
     fontFamily: F.regular,
     ...T.subhead,
     lineHeight: 21,
-    color: "#4f5f44",
+    color: "#4a443b",
   },
   scanPreview: {
     width: "100%",
@@ -2549,7 +2549,7 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  step: { fontFamily: F.medium, fontSize: 24, lineHeight: 30, color: C.green },
+  step: { fontFamily: F.medium, fontSize: 24, lineHeight: 30, color: C.denim },
   qty: { fontFamily: F.medium, ...T.headline, color: C.ink },
   conditions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   conditionChip: {
@@ -2561,7 +2561,7 @@ const s = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "white",
   },
-  conditionChipOn: { backgroundColor: C.green, borderColor: C.green },
+  conditionChipOn: { backgroundColor: C.denim, borderColor: C.denim },
   conditionText: { fontFamily: F.medium, ...T.subhead, color: C.ink },
   conditionTextOn: { color: "white" },
   whyToggle: {
@@ -2580,7 +2580,7 @@ const s = StyleSheet.create({
     marginTop: 6,
   },
   reasonLead: { fontFamily: F.semi, color: C.ink },
-  reasonItalic: { fontFamily: F.italic, fontSize: 16, color: C.moss },
+  reasonItalic: { fontFamily: F.italic, fontSize: 16, color: C.brass },
   reviewTotal: {
     flexDirection: "row",
     alignItems: "center",
@@ -2628,17 +2628,17 @@ const s = StyleSheet.create({
   inventoryPrice: { fontFamily: F.medium, ...T.headline, color: C.ink },
   storeCard: {
     alignItems: "center",
-    backgroundColor: C.sage,
+    backgroundColor: C.stone,
     borderRadius: R.lg,
     padding: 26,
     borderWidth: 1,
-    borderColor: "#e0e6d4",
+    borderColor: C.stoneLine,
   },
   storeAvatar: {
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: "#cedbbd",
+    backgroundColor: C.stoneDeep,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 14,
@@ -2647,7 +2647,7 @@ const s = StyleSheet.create({
     fontFamily: F.serif,
     fontSize: 30,
     lineHeight: 36,
-    color: C.green,
+    color: C.denim,
   },
   storeName: {
     fontFamily: F.serif,
@@ -2673,8 +2673,8 @@ const s = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderWidth: 1,
-    borderColor: "#cdd8bd",
-    backgroundColor: "#f6f8ef",
+    borderColor: C.stoneLine,
+    backgroundColor: C.white,
     borderRadius: R.sm,
     minHeight: 48,
   },
@@ -2715,7 +2715,7 @@ const s = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 12,
-    backgroundColor: C.sage,
+    backgroundColor: C.stone,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -2731,7 +2731,7 @@ const s = StyleSheet.create({
     width: 92,
     height: 92,
     borderRadius: R.xl,
-    backgroundColor: C.sage,
+    backgroundColor: C.stone,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -2769,7 +2769,7 @@ const s = StyleSheet.create({
     minHeight: 50,
   },
   fieldInput: { fontFamily: F.regular, fontSize: 17, lineHeight: 22, minWidth: 0 },
-  dangerCard: { marginTop: 14, borderColor: "#edc8b8" },
+  dangerCard: { marginTop: 14, borderColor: "#e6c6b8" },
   dangerBody: {
     fontFamily: F.regular,
     ...T.subhead,
@@ -2815,7 +2815,7 @@ const s = StyleSheet.create({
   integrationFeature: {
     fontFamily: F.medium,
     ...T.subhead,
-    color: "#4f5f44",
+    color: "#4a443b",
     marginTop: 6,
   },
   integrationDetail: {
@@ -2828,7 +2828,7 @@ const s = StyleSheet.create({
   privacyCard: {
     flexDirection: "row",
     gap: 14,
-    backgroundColor: C.sage,
+    backgroundColor: C.stone,
     padding: 18,
     borderRadius: R.md,
     marginTop: 26,
@@ -2849,7 +2849,7 @@ const s = StyleSheet.create({
   modalBackground: {
     flex: 1,
     justifyContent: "flex-end",
-    backgroundColor: "#17372c66",
+    backgroundColor: "#26231f66",
   },
   modalDismiss: { flex: 1 },
   sheet: {
@@ -2864,7 +2864,7 @@ const s = StyleSheet.create({
     width: 36,
     height: 5,
     borderRadius: 3,
-    backgroundColor: "#d3dac7",
+    backgroundColor: C.stoneLine,
     alignSelf: "center",
     marginBottom: 24,
   },
@@ -2890,7 +2890,7 @@ const s = StyleSheet.create({
     justifyContent: "center",
     gap: 10,
     borderWidth: 1,
-    borderColor: "#cbd5be",
+    borderColor: "#cfc7b6",
     borderRadius: 14,
     minHeight: 56,
     padding: 16,
@@ -2898,7 +2898,7 @@ const s = StyleSheet.create({
   },
   qrBackdrop: {
     flex: 1,
-    backgroundColor: "#17372c80",
+    backgroundColor: "#26231f80",
     alignItems: "center",
     justifyContent: "center",
     padding: 20,
@@ -2925,7 +2925,7 @@ const s = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: C.sage,
+    backgroundColor: C.stone,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 16,
