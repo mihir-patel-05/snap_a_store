@@ -276,8 +276,7 @@ export async function scanPhoto(bytes: Buffer) {
   const client = new Anthropic({
     apiKey: requireConfig("ANTHROPIC_API_KEY"),
     maxRetries: 1,
-    // High effort thinks longer before answering.
-    timeout: 90000,
+    timeout: 45000,
   });
   const request = {
     model: process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5",
@@ -309,7 +308,7 @@ export async function scanPhoto(bytes: Buffer) {
     messages,
     // Current models reject forced tool_choice; structured output returns schema-valid JSON.
     output_config: {
-      effort: "high",
+      effort: "medium",
       format: { type: "json_schema", schema: scanSchema },
     },
   });
@@ -354,7 +353,7 @@ export async function scanPhoto(bytes: Buffer) {
           },
         ],
         output_config: {
-          effort: "high",
+          effort: "medium",
           format: { type: "json_schema", schema: repriceSchema },
         },
       });
