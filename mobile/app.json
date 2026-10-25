@@ -24,7 +24,7 @@
     "android": {
       "package": "com.snapastore.mobile",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/icon.png",
+        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#193d33"
       },
       "permissions": [
@@ -33,7 +33,7 @@
     },
     "web": {
       "bundler": "metro",
-      "favicon": "./assets/icon.png"
+      "favicon": "./assets/favicon.png"
     },
     "plugins": [
       [

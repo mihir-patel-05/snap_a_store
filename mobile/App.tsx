@@ -29,7 +29,7 @@ import * as Clipboard from "expo-clipboard";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import QRCode from "react-native-qrcode-svg";
 import { federatedSignIn } from "./lib/oauth";
-import Svg, { Path } from "react-native-svg";
+import Svg, { Circle, Path } from "react-native-svg";
 import { PaymentSetup } from "./components/payment-setup";
 import { ConvexClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
@@ -99,6 +99,19 @@ const CONDITIONS: DraftItem["condition"][] = [
   "Fair",
   "Check condition",
 ];
+/** The Snap-a-Store mark: a shop awning over a camera lens. Matches assets/icon.png. */
+function BrandMark({ size = 22 }: { size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="20 22 60 60">
+      <Path
+        d="M26 27h48l8 14a8 8 0 0 1-16 0a8 8 0 0 1-16 0a8 8 0 0 1-16 0a8 8 0 0 1-16 0z"
+        fill={C.lime}
+      />
+      <Circle cx="50" cy="66" r="11.5" fill="none" stroke={C.lime} strokeWidth="6" />
+      <Circle cx="50" cy="66" r="4.5" fill={C.orange} />
+    </Svg>
+  );
+}
 export default function App() {
   const [loaded, error] = useFonts({
     DMSans_400Regular,
@@ -773,15 +786,16 @@ function SellerApp() {
       </SafeAreaView>
     );
   return (
-    <SafeAreaView style={s.safe} edges={["top", "left", "right"]}>
+    <SafeAreaView style={s.safeBand} edges={["top", "left", "right"]}>
+      <StatusBar style="light" />
       <KeyboardAvoidingView
-        style={s.flex}
+        style={[s.flex, { backgroundColor: C.paper }]}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <View style={s.topBar}>
           <View style={s.brand}>
             <View style={s.brandMark}>
-              <ScanLine size={22} color={C.paper} />
+              <BrandMark size={30} />
             </View>
             <Text style={s.brandText}>
               snap<Text style={s.brandA}>a</Text>store
@@ -2016,6 +2030,8 @@ function InventoryRow({
 const s = StyleSheet.create({
   flex: { flex: 1, minWidth: 0 },
   safe: { flex: 1, backgroundColor: C.paper },
+  // The signed-in screen's status bar area shares the green brand band.
+  safeBand: { flex: 1, backgroundColor: C.ink },
   topBar: {
     minHeight: 72,
     paddingHorizontal: 20,
@@ -2024,8 +2040,7 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: C.line,
+    backgroundColor: C.ink,
   },
   storePill: {
     flexDirection: "row",
@@ -2037,8 +2052,6 @@ const s = StyleSheet.create({
     paddingLeft: 4,
     paddingRight: 12,
     borderRadius: R.pill,
-    borderWidth: 1,
-    borderColor: C.line,
     backgroundColor: C.white,
   },
   storePillText: {
@@ -2068,10 +2081,8 @@ const s = StyleSheet.create({
   },
   brand: { flexDirection: "row", alignItems: "center", gap: 10 },
   brandMark: {
-    width: 36,
-    height: 36,
-    borderRadius: 11,
-    backgroundColor: C.ink,
+    width: 34,
+    height: 34,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -2080,7 +2091,7 @@ const s = StyleSheet.create({
     fontSize: 24,
     lineHeight: 30,
     letterSpacing: -1,
-    color: C.ink,
+    color: C.paper,
   },
   brandA: { fontFamily: F.regular, fontSize: 20 },
   avatar: {
