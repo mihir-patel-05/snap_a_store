@@ -38,7 +38,7 @@ beforeEach(() => {
   }))
     vi.stubEnv(k, v);
   repo.db.exec(
-    "DELETE FROM limits; DELETE FROM jobs; DELETE FROM sessions; DELETE FROM primary_stores; DELETE FROM outbox; DELETE FROM activity; DELETE FROM publishes; DELETE FROM photos; DELETE FROM orders; DELETE FROM items; DELETE FROM stores;",
+    "DELETE FROM limits; DELETE FROM jobs; DELETE FROM sessions; DELETE FROM primary_stores; DELETE FROM outbox; DELETE FROM activity; DELETE FROM publishes; DELETE FROM photos; DELETE FROM orders; DELETE FROM items; DELETE FROM seller_stores; DELETE FROM stores;",
   );
 });
 afterAll(() => {
@@ -132,7 +132,14 @@ describe("production HTTP boundaries", () => {
     ).toBe(403);
   });
   it("removes public seller creation and sample endpoints", async () => {
-    expect((await call("/stores", { name: "Nope" })).status).toBe(404);
+    expect(
+      (await call("/stores", { name: "Nope", requestKey: randomUUID() }))
+        .status,
+    ).toBe(401);
+    expect((await call("/stores")).status).toBe(401);
+    expect(repo.db.prepare("SELECT COUNT(*) AS n FROM stores").get()).toEqual({
+      n: 0,
+    });
     expect((await call("/sample", {})).status).toBe(404);
     const { order } = reserve();
     expect((await call(`/orders/${order.id}/demo-complete`, {})).status).toBe(
@@ -456,5 +463,157 @@ describe("production HTTP boundaries", () => {
   it("protects background maintenance with its own secret", async () => {
     expect((await call("/maintenance", {})).status).toBe(401);
     expect((await call("/maintenance", {}, "wrong")).status).toBe(401);
+  });
+});
+describe("multiple storefronts", () => {
+  async function login() {
+    return (
+      await call("/auth/login", {
+        email: "seller@example.com",
+        password: "long-test-password",
+      })
+    ).json();
+  }
+  async function open(token: string, name: string, requestKey = randomUUID()) {
+    return call("/stores", { name, requestKey }, token);
+  }
+  it("lets one seller sign-in open, list, and manage several storefronts", async () => {
+    const session = await login();
+    // Older app builds save the whole login response in SecureStore; keep it small.
+    expect(Object.keys(session).sort()).toEqual(["store", "token"]);
+    const initial = await (
+      await call("/stores", undefined, session.token)
+    ).json();
+    expect(initial.stores.map((s: { id: string }) => s.id)).toEqual([
+      session.store.id,
+    ]);
+    const response = await open(session.token, "Garage sale");
+    expect(response.status).toBe(200);
+    const { store, stores } = await response.json();
+    expect(store).toMatchObject({
+      name: "Garage sale",
+      paymentMode: "production",
+    });
+    expect(stores.map((s: { id: string }) => s.id)).toEqual([
+      session.store.id,
+      store.id,
+    ]);
+    expect(stores[1]).toMatchObject({ listed: 0, available: 0 });
+    const listed = await (
+      await call("/stores", undefined, session.token)
+    ).json();
+    expect(listed.stores).toHaveLength(2);
+    const restored = await (
+      await call("/auth/session", undefined, session.token)
+    ).json();
+    expect(restored.store.id).toBe(session.store.id);
+    expect(restored.stores).toHaveLength(2);
+    const renamed = await handle(
+      new Request(`${url}/api/stores/${store.id}`, {
+        method: "PATCH",
+        headers: { authorization: `Bearer ${session.token}` },
+        body: JSON.stringify({ name: "Spring garage sale" }),
+      }),
+    );
+    expect(renamed.status).toBe(200);
+    expect(repo.store(store.id)?.name).toBe("Spring garage sale");
+    expect(repo.store(session.store.id)?.name).toBe("Real store");
+    expect(
+      (
+        await call(
+          `/scan?storeId=${store.id}`,
+          { photo: "fake" },
+          session.token,
+        )
+      ).status,
+    ).toBe(400);
+  });
+  it("creates each storefront once per request key and caps the total", async () => {
+    const { token } = await login();
+    const requestKey = randomUUID();
+    const first = await (await open(token, "Book table", requestKey)).json();
+    const retry = await (await open(token, "Book table", requestKey)).json();
+    expect(retry.store.id).toBe(first.store.id);
+    expect(retry.stores).toHaveLength(2);
+    expect((await open(token, "x")).status).toBe(400);
+    expect(
+      (await call("/stores", { name: "No key", requestKey: "1" }, token))
+        .status,
+    ).toBe(400);
+    for (let n = 3; n <= 20; n++)
+      expect((await open(token, `Table ${n}`)).status).toBe(200);
+    const over = await open(token, "One too many");
+    expect(over.status).toBe(409);
+    expect((await over.json()).error).toContain("up to 20 storefronts");
+  });
+  it("keeps inventory, checkout, and stats separate per storefront", async () => {
+    const session = await login();
+    const second = (await (await open(session.token, "Second")).json()).store;
+    const publish = (storeId: string, item = fixtureItems[1]) => {
+      const key = randomUUID();
+      const batch = repo.beginPublish(storeId, key, [item]);
+      repo.finishPublish(storeId, key, batch.items);
+      return batch.items[0];
+    };
+    const lamp = publish(session.store.id);
+    const sameDraftElsewhere = publish(second.id);
+    expect(sameDraftElsewhere.id).not.toBe(lamp.id);
+    expect(repo.snapshot(session.store.id).items.map((i) => i.id)).toEqual([
+      lamp.id,
+    ]);
+    expect(() =>
+      repo.reserve(second.id, randomUUID(), [{ itemId: lamp.id, quantity: 1 }]),
+    ).toThrow("no longer available");
+    const order = repo.reserve(second.id, randomUUID(), [
+      { itemId: sameDraftElsewhere.id, quantity: 1 },
+    ]);
+    repo.complete(order.id, "pay-second", order.totalCents);
+    expect(repo.snapshot(second.id).stats.sold).toBe(1);
+    expect(repo.snapshot(session.store.id).stats.sold).toBe(0);
+    const { stores } = await (
+      await call("/stores", undefined, session.token)
+    ).json();
+    expect(stores).toMatchObject([
+      { id: session.store.id, listed: 1, available: 1 },
+      { id: second.id, listed: 1, available: 0 },
+    ]);
+  });
+  it("applies the paid scan limit to the seller, not each storefront", async () => {
+    const session = await login();
+    const second = (await (await open(session.token, "Second")).json()).store;
+    for (let n = 0; n < 6; n++)
+      expect(
+        (
+          await call(
+            `/scan?storeId=${n % 2 ? second.id : session.store.id}`,
+            { photo: "fake" },
+            session.token,
+          )
+        ).status,
+      ).toBe(400);
+    expect(
+      (
+        await call(
+          `/scan?storeId=${second.id}`,
+          { photo: "fake" },
+          session.token,
+        )
+      ).status,
+    ).toBe(429);
+  });
+  it("scopes storefronts to the configured Square location", async () => {
+    const session = await login();
+    const second = (await (await open(session.token, "Second")).json()).store;
+    vi.stubEnv("SQUARE_LOCATION_ID", "new-location");
+    const moved = await (
+      await call("/auth/session", undefined, session.token)
+    ).json();
+    expect(moved.store.id).not.toBe(session.store.id);
+    expect(moved.stores.map((s: { id: string }) => s.id)).toEqual([
+      moved.store.id,
+    ]);
+    expect(
+      (await call(`/stores/${second.id}`, undefined, session.token)).status,
+    ).toBe(410);
   });
 });

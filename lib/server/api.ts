@@ -4,6 +4,7 @@ import QRCode from "qrcode";
 import { repo } from "../repo";
 import {
   CheckoutRequest,
+  CreateStoreRequest,
   PublishRequest,
   type Integration,
 } from "../contracts";
@@ -101,6 +102,17 @@ function auth(req: Request, id: string) {
   repo.authorize(id, token(req));
   assertStoreEnvironment(repo.store(id)!);
 }
+// The seller's storefronts for the configured Square location; the first one is created on demand.
+function sellerStores() {
+  const mode = paymentEnvironment();
+  const environment = `${mode}:${requireConfig("SQUARE_LOCATION_ID")}`;
+  const store = repo.primaryStore(
+    environment,
+    process.env.BUSINESS_NAME || "My store",
+    mode,
+  );
+  return { mode, environment, store, stores: repo.sellerStores(environment) };
+}
 async function bytes(req: Request, max = 100_000) {
   if (Number(req.headers.get("content-length") || 0) > max)
     throw new AppError(413, "Upload is too large.");
@@ -191,22 +203,18 @@ async function route(req: Request): Promise<Response> {
       .parse(await body(req));
     repo.limit(`login:${data.email.toLowerCase()}`, 10, 15 * 60_000);
     await verifyLogin(data.email, data.password);
-    const location = requireConfig("SQUARE_LOCATION_ID");
-    const environment = paymentEnvironment();
-    const store = repo.primaryStore(
-      `${environment}:${location}`,
-      process.env.BUSINESS_NAME || "My store",
-      environment,
-    );
+    const { store } = sellerStores();
     const ownerToken = repo.createSession(store.id);
+    // Unchanged shape: older app builds save this whole response in SecureStore.
+    // Clients fetch the storefront list from /stores.
     const response = json({ store, token: ownerToken });
     response.headers.set("Set-Cookie", sessionCookie(ownerToken));
     return response;
   }
   if (p[0] === "auth" && p[1] === "session" && method === "GET") {
-    const store = repo.session(token(req));
-    assertStoreEnvironment(store);
-    return json({ store });
+    repo.session(token(req));
+    const { store, stores } = sellerStores();
+    return json({ store, stores });
   }
   if (p[0] === "auth" && p[1] === "logout" && method === "POST") {
     repo.revokeSession(token(req));
@@ -226,6 +234,25 @@ async function route(req: Request): Promise<Response> {
     )
       throw new AppError(401, "Unauthorized.");
     return json(await maintenance());
+  }
+  if (p[0] === "stores" && p.length === 1) {
+    if (method === "GET") {
+      repo.session(token(req));
+      return json({ stores: sellerStores().stores });
+    }
+    if (method === "POST") {
+      // Only the signed-in seller can add storefronts; there is no public signup.
+      repo.session(token(req));
+      const data = CreateStoreRequest.parse(await body(req));
+      const { mode, environment } = sellerStores();
+      const store = repo.addStore(
+        environment,
+        data.name,
+        mode,
+        data.requestKey,
+      );
+      return json({ store, stores: repo.sellerStores(environment) });
+    }
   }
   if (p[0] === "stores" && p[1]) {
     const id = p[1];
@@ -280,6 +307,8 @@ async function route(req: Request): Promise<Response> {
           headers: { "Content-Type": "audio/wav", "Cache-Control": "no-store" },
         });
       rateLimit(`audio:${id}`, 5);
+      // Deployment-wide ceiling so more storefronts do not multiply Cartesia spend.
+      rateLimit("audio", 10);
       const data = await speak(
         narration(snap, language).slice(0, 5000),
         language,
@@ -296,7 +325,8 @@ async function route(req: Request): Promise<Response> {
     // Authenticate before buffering a large upload or making a paid model request.
     const id = url.searchParams.get("storeId") || "";
     auth(req, id);
-    rateLimit(`scan:${id}`, 6);
+    // Provider limits apply to the seller, not each storefront.
+    rateLimit("seller:scan", 6);
     const raw = await bytes(req, 10 * 1024 * 1024 + 8192);
     let form: FormData;
     try {
@@ -347,7 +377,7 @@ async function route(req: Request): Promise<Response> {
       .object({ storeId: z.string(), name: z.string().trim().min(2).max(100) })
       .parse(await body(req));
     auth(req, data.storeId);
-    rateLimit(`compare:${data.storeId}`, 8);
+    rateLimit("seller:compare", 8);
     return json(await comparePrices(data.name));
   }
   if (method === "POST" && p[0] === "publish") {

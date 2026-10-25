@@ -65,6 +65,8 @@ SALES_TAX_PERCENT=your_applicable_percentage
 DATABASE_PATH=data/snap-live.sqlite
 ```
 
+`BUSINESS_NAME` also names your first storefront. After signing in you can open more storefronts (up to 20) from the storefront switcher in the app or `/studio`. Every storefront uses these business settings and the same Square location.
+
 `SALES_TAX_PERCENT` is a number from 0 to 30, up to four decimal places. For example, `8.625` means 8.625%. Set `0` only when appropriate for your sales. The application does not determine tax obligations or automatically choose rates by jurisdiction. It applies this configured rate to all items; businesses with exemptions or multiple tax jurisdictions need more tax logic before using this deployment for those sales.
 
 Create the seller login locally:

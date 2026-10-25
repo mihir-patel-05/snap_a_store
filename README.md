@@ -33,13 +33,15 @@ The local mobile API URL is `http://172.20.1.172:3000`. Sign in with the seller 
 
 ## Operating scope
 
-This deployment serves **one Square merchant, one location, USD prices, and local pickup**. The same seller can sign in on multiple devices. Multi-merchant Square OAuth, shipping, and app-based refunds are not implemented. Manage refunds/disputes in Square; refunded stock is not automatically relisted. Dedicated inventory sold through this app is authoritative in SQLite; don't sell the same reserved stock through a separate channel. Apify and Cartesia are optional; durable inventory does not require Convex.
+This deployment serves **one Square merchant, one location, USD prices, and local pickup**. The same seller can sign in on multiple devices.
+
+The seller can run **several storefronts** (up to 20), for example one per sale or collection. Each storefront has its own link, QR code, inventory, and sales stats. All of them share the Square account and location, tax rate, and pickup/return policies. Switch storefronts from the top bar in the app or the storefront row in `/studio`. Storefronts cannot be deleted yet; rename one you no longer use. Multi-merchant Square OAuth, shipping, and app-based refunds are not implemented. Manage refunds/disputes in Square; refunded stock is not automatically relisted. Dedicated inventory sold through this app is authoritative in SQLite; don't sell the same reserved stock through a separate channel. Apify and Cartesia are optional; durable inventory does not require Convex.
 
 Run one backend replica on persistent local storage. The supplied production Compose configuration adds HTTPS through Caddy and a maintenance worker that reconciles payments and cancels expired checkouts only after Square confirms they are unpaid. Do not deploy this SQLite service on an ephemeral/serverless filesystem.
 
 ## Security and payment behavior
 
-- Seller passwords are scrypt hashes; opaque sessions are hashed, expire after 30 days, and are revoked when the configured password changes. Web sessions use HttpOnly cookies; native sessions use SecureStore. No public merchant signup endpoint exists.
+- Seller passwords are scrypt hashes; opaque sessions are hashed, expire after 30 days, and are revoked when the configured password changes. Web sessions use HttpOnly cookies; native sessions use SecureStore. No public merchant signup endpoint exists; only the signed-in seller can open more storefronts.
 - A checkout key survives retries. The browser supports HTTP environments without `crypto.randomUUID()` using secure random bytes or server-issued UUIDs; it never falls back to `Math.random()`.
 - Square catalog publication and payment-link creation use stable idempotency keys. Stock reservations survive process restarts and uncertain network failures.
 - A signed webhook or authenticated Square payment lookup verifies order, location, currency, amount, and completion. Browser redirects cannot mark orders paid.

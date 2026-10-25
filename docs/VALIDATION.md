@@ -2,7 +2,15 @@
 
 Checked October 24, 2026, using Node 22.22.2. This is evidence of the checks below, not certification of an unconfigured deployment.
 
-## Passed
+## Multiple storefronts revision (October 25, 2026, Node 22.22.0)
+
+- 50 automated tests. New coverage: one seller session opens, lists, renames, and scans for several storefronts; anonymous listing/creation is rejected; idempotent creation per request key and the 20-storefront cap; inventory, checkout, and stats isolation between storefronts; the paid scan limit applies to the seller, not each storefront; storefronts are scoped to the configured Square location; a database from the single-store schema upgrades in place without signing the seller out.
+- Root typecheck and optimized Next.js production build. Native typecheck and Expo SDK 58 export for iOS, Android, and web.
+- `npm run smoke` against the production build.
+- Headless Chromium (Playwright's bundled browser) against the production build with a scratch database, a throwaway seller login, and no external service credentials. In the web studio at 1280 px and 390 px: sign in, open a second storefront, switch both ways, keep a saved draft with its own storefront only, remember the open storefront across reloads, check for horizontal overflow, load the new storefront's public page. In the Expo web export at 390×844 and 360×640: open a storefront from the top-bar sheet, switch, restore the open storefront after reload, rename only the open storefront, sign out. No JS exceptions. Screenshots visually inspected.
+- Not run for this revision: the repository's `browser-smoke`/`native-smoke` scripts (they target installed Chrome and an isolated account), Square/Claude/Apify/Cartesia/Convex calls, and physical iOS/Android devices. The outstanding release checks below still apply.
+
+## Passed (October 24, 2026)
 
 - 40 automated tests: transactional stock limits, durable reservations, idempotent publication, uncertain-publish conflicts, exact payment totals, sold out, ownership/photo isolation, malformed input, real login/logout/password rotation, login throttling, retired endpoint removal, environment isolation, fail-closed configuration, Square request construction, network timeouts, forged/duplicate webhooks, webhook-before-link races, payment reconciliation, verified cancellation, hold expiry, and Square tax totals.
 - Browser UUID regression tests with `crypto.randomUUID` absent, secure-byte fallback, server fallback, and repeated checkout retaining the same key.

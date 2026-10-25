@@ -42,6 +42,7 @@ import {
   BookOpen,
   Camera,
   Check,
+  ChevronDown,
   ChevronRight,
   CircleHelp,
   Coffee,
@@ -75,7 +76,10 @@ import {
   saveSession,
   money,
   type Session,
+  type SellerStores,
   type DraftItem,
+  type Store,
+  type StoreSummary,
   type StoreSnapshot,
   type Integration,
   type Comparison,
@@ -147,12 +151,17 @@ function SellerApp() {
     [search, setSearch] = useState(""),
     [publishUrl, setPublishUrl] = useState(""),
     [booted, setBooted] = useState(false),
+    [stores, setStores] = useState<StoreSummary[]>([]),
+    [storesOpen, setStoresOpen] = useState(false),
+    [newStoreName, setNewStoreName] = useState(""),
     [comparisons, setComparisons] = useState<{
       item: DraftItem;
       rows: Comparison[];
       note: string;
     } | null>(null);
   const publishKey = useRef(""),
+    storeKey = useRef(""),
+    activeStore = useRef(""),
     toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null),
     scroll = useRef<React.ElementRef<typeof ScrollView>>(null);
   const notify = (message: string) => {
@@ -160,19 +169,65 @@ function SellerApp() {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(""), 3500);
   };
+  // Revisions are per store: ignore late responses for a storefront that is no longer open.
+  const applySnapshot = useCallback((data: StoreSnapshot) => {
+    if (data.store.id !== activeStore.current) return;
+    setSnapshot((old) =>
+      !old ||
+      old.store.id !== data.store.id ||
+      data.store.revision >= old.store.revision
+        ? data
+        : old,
+    );
+  }, []);
+  const loadStores = useCallback(async (token: string) => {
+    try {
+      setStores(
+        (await api<{ stores: StoreSummary[] }>("/stores", token)).stores,
+      );
+    } catch {
+      /* The storefront list is refreshed again on the next pull or switch. */
+    }
+  }, []);
   const refresh = useCallback(
     async (s = session) => {
       if (s) {
-        const data = await api<StoreSnapshot>(`/stores/${s.store.id}`, s.token);
-        setSnapshot((old) =>
-          !old || data.store.revision >= old.store.revision ? data : old,
+        applySnapshot(
+          await api<StoreSnapshot>(`/stores/${s.store.id}`, s.token),
         );
+        await loadStores(s.token);
       }
       const h = await api<{ integrations: Integration[] }>("/health");
       setIntegrations(h.integrations);
     },
-    [session],
+    [session, applySnapshot, loadStores],
   );
+  // Opens one storefront on this device with its own saved draft.
+  async function activate(next: Session) {
+    const saved = await AsyncStorage.getItem(`draft:${next.store.id}`).catch(
+      () => null,
+    );
+    let draft: {
+      items?: DraftItem[];
+      photo?: string | null;
+      key?: string;
+      locked?: boolean;
+    } | null = null;
+    try {
+      draft = saved ? JSON.parse(saved) : null;
+    } catch {}
+    activeStore.current = next.store.id;
+    setSession(next);
+    setName(next.store.name);
+    setSnapshot(null);
+    setPublishUrl("");
+    setSearch("");
+    setDrafts(draft?.items || []);
+    setPhoto(draft?.photo || null);
+    publishKey.current = draft?.key || "";
+    setPublishLocked(Boolean(draft?.locked));
+    await saveSession(next);
+  }
   useEffect(() => {
     let active = true;
     (async () => {
@@ -180,25 +235,16 @@ function SellerApp() {
         const saved = await loadSession();
         if (!active) return;
         if (saved) {
-          const current = await api<{ store: Session["store"] }>(
-            "/auth/session",
-            saved.token,
-          );
-          saved.store = current.store;
-          setSession(saved);
-          setName(saved.store.name);
-          const savedDraft = await AsyncStorage.getItem(
-            `draft:${saved.store.id}`,
-          );
-          if (savedDraft) {
-            const d = JSON.parse(savedDraft);
-            setDrafts(d.items);
-            setPhoto(d.photo);
-
-            publishKey.current = d.key;
-            setPublishLocked(Boolean(d.locked));
-          }
-          await refresh(saved);
+          const current = await api<SellerStores>("/auth/session", saved.token);
+          const next = {
+            token: saved.token,
+            store:
+              current.stores.find((s) => s.id === saved.store.id) ||
+              current.store,
+          };
+          setStores(current.stores);
+          await activate(next);
+          await refresh(next);
         } else {
           const h = await api<{ integrations: Integration[] }>("/health");
           if (active) setIntegrations(h.integrations);
@@ -238,10 +284,7 @@ function SellerApp() {
     if (!session) return;
     let active = true;
     const update = (data: StoreSnapshot) => {
-      if (active)
-        setSnapshot((old) =>
-          !old || data.store.revision >= old.store.revision ? data : old,
-        );
+      if (active) applySnapshot(data);
     };
     const interval = setInterval(
       () =>
@@ -276,7 +319,7 @@ function SellerApp() {
       unsubscribe?.();
       void client?.close();
     };
-  }, [session]);
+  }, [session, applySnapshot]);
   async function run(label: string, fn: () => Promise<void>) {
     setBusy(label);
     setError("");
@@ -300,22 +343,52 @@ function SellerApp() {
   }
   async function signIn() {
     await run("Signing in", async () => {
-      const result = await api<Session>("/auth/login", undefined, {
+      const next = await api<Session>("/auth/login", undefined, {
         email: email.trim(),
         password,
       });
-      await saveSession(result);
-      setSession(result);
-      setName(result.store.name);
+      await activate({ token: next.token, store: next.store });
       setPassword("");
-      await refresh(result);
+      await refresh(next);
+    });
+  }
+  async function switchStore(next: Store) {
+    setStoresOpen(false);
+    if (!session || next.id === session.store.id) return;
+    await run("Opening your storefront", async () => {
+      const s = { token: session.token, store: next };
+      await activate(s);
+      await refresh(s);
+      notify(`Now managing ${next.name}.`);
+    });
+  }
+  async function openStore() {
+    if (!session || newStoreName.trim().length < 2) return;
+    setStoresOpen(false);
+    await run("Opening a new storefront", async () => {
+      // One key per intended storefront, so a retried request cannot create a duplicate.
+      storeKey.current ||= Crypto.randomUUID();
+      const result = await api<SellerStores>("/stores", session.token, {
+        name: newStoreName.trim(),
+        requestKey: storeKey.current,
+      });
+      storeKey.current = "";
+      setNewStoreName("");
+      setStores(result.stores);
+      const s = { token: session.token, store: result.store };
+      await activate(s);
+      setTab("store");
+      await refresh(s);
+      notify(`${result.store.name} is ready for its first finds.`);
     });
   }
   async function signOut() {
     await run("Signing out", async () => {
       if (session) await api("/auth/logout", session.token, {});
       await clearSession();
+      activeStore.current = "";
       setSession(null);
+      setStores([]);
       setSnapshot(null);
       setDrafts([]);
       setPublishLocked(false);
@@ -410,6 +483,7 @@ function SellerApp() {
         setSnapshot(result);
         setPublishUrl(result.url);
         setDrafts([]);
+        void loadStores(session.token);
         setTab("store");
         setQr(true);
         void Haptics.notificationAsync(
@@ -455,6 +529,9 @@ function SellerApp() {
       setSnapshot(data);
       const s = { ...session, store: data.store };
       setSession(s);
+      setStores((list) =>
+        list.map((x) => (x.id === data.store.id ? { ...x, ...data.store } : x)),
+      );
       await saveSession(s);
       notify("Your store has a new name.");
     });
@@ -600,14 +677,21 @@ function SellerApp() {
           </View>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Open settings"
+            accessibilityLabel={`Storefront: ${session.store.name}. Switch or add a storefront`}
             onPress={() => {
-              setTab("connections");
-              scroll.current?.scrollTo({ y: 0, animated: true });
+              setStoresOpen(true);
+              void loadStores(session.token);
             }}
-            style={s.avatar}
+            disabled={drafts.length > 0 || !!busy}
+            style={s.storePill}
           >
-            <Text style={s.avatarText}>{name.slice(0, 1)}</Text>
+            <View style={s.avatar}>
+              <Text style={s.avatarText}>{session.store.name.slice(0, 1)}</Text>
+            </View>
+            <Text style={s.storePillText} numberOfLines={1}>
+              {session.store.name}
+            </Text>
+            {drafts.length === 0 && <ChevronDown size={15} color={C.muted} />}
           </Pressable>
         </View>
         <ScrollView
@@ -1065,7 +1149,7 @@ function SellerApp() {
                 Useful technology. A more human way to sell.
               </Text>
               <View style={s.settingCard}>
-                <Text style={s.fieldLabel}>YOUR STORE NAME</Text>
+                <Text style={s.fieldLabel}>THIS STOREFRONT’S NAME</Text>
                 <TextInput
                   style={s.storeNameInput}
                   value={name}
@@ -1254,6 +1338,105 @@ function SellerApp() {
               </Pressable>
             </View>
           </View>
+        </Modal>
+        <Modal
+          transparent
+          visible={storesOpen}
+          animationType="slide"
+          onRequestClose={() => setStoresOpen(false)}
+        >
+          <KeyboardAvoidingView
+            style={s.flex}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
+            <View style={s.modalBackground}>
+              <Pressable
+                style={s.modalDismiss}
+                accessibilityLabel="Close storefronts"
+                onPress={() => setStoresOpen(false)}
+              />
+              <View style={[s.sheet, { maxHeight: "88%" }]}>
+                <View style={s.sheetHandle} />
+                <Eyebrow text="YOUR STOREFRONTS" />
+                <Text style={s.sheetTitle}>
+                  Your little<Text style={s.italic}> storefronts.</Text>
+                </Text>
+                <Text style={s.sheetBody}>
+                  Each storefront has its own link, QR code, and collection.
+                  Every sale is paid through your Square account.
+                </Text>
+                <ScrollView
+                  style={{ flexGrow: 0 }}
+                  keyboardShouldPersistTaps="handled"
+                >
+                  {stores.map((store) => {
+                    const open = store.id === session.store.id;
+                    return (
+                      <Pressable
+                        key={store.id}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: open }}
+                        accessibilityLabel={`${store.name}${open ? ", open now" : ""}`}
+                        onPress={() => void switchStore(store)}
+                        style={[s.storeRow, open && s.storeRowOpen]}
+                      >
+                        <View
+                          style={[
+                            s.avatar,
+                            open && {
+                              backgroundColor: C.green,
+                              borderColor: C.green,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[s.avatarText, open && { color: C.paper }]}
+                          >
+                            {store.name.slice(0, 1)}
+                          </Text>
+                        </View>
+                        <View style={s.flex}>
+                          <Text style={s.storeRowName} numberOfLines={1}>
+                            {store.name}
+                          </Text>
+                          <Text style={s.tiny}>
+                            {store.listed
+                              ? store.available
+                                ? `${store.available} finds available`
+                                : "Sold out"
+                              : "No finds yet"}
+                          </Text>
+                        </View>
+                        {open && <Check size={18} color={C.green} />}
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+                <Text style={[s.fieldLabel, { marginTop: 22 }]}>
+                  NEW STOREFRONT
+                </Text>
+                <TextInput
+                  style={[s.storeNameInput, { fontSize: 20, marginBottom: 18 }]}
+                  value={newStoreName}
+                  onChangeText={(v) => {
+                    setNewStoreName(v);
+                    storeKey.current = "";
+                  }}
+                  placeholder="Name your storefront"
+                  placeholderTextColor={C.muted}
+                  maxLength={60}
+                  accessibilityLabel="New storefront name"
+                  onSubmitEditing={() => void openStore()}
+                />
+                <Button
+                  label="Open a new storefront"
+                  icon={<Plus size={18} color="white" />}
+                  onPress={() => void openStore()}
+                  disabled={newStoreName.trim().length < 2 || !!busy}
+                />
+              </View>
+            </View>
+          </KeyboardAvoidingView>
         </Modal>
         <Modal
           transparent
@@ -1527,8 +1710,48 @@ const s = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    gap: 12,
     borderBottomWidth: 1,
     borderBottomColor: C.line,
+  },
+  storePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flexShrink: 1,
+    maxWidth: "55%",
+    minHeight: 44,
+    paddingLeft: 4,
+    paddingRight: 11,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: C.line,
+    backgroundColor: C.white,
+  },
+  storePillText: {
+    fontFamily: F.semi,
+    fontSize: 12,
+    color: C.ink,
+    flexShrink: 1,
+  },
+  storeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    minHeight: 60,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "transparent",
+    marginBottom: 6,
+  },
+  storeRowOpen: { backgroundColor: "#e9eddf", borderColor: "#d9dfcb" },
+  storeRowName: {
+    fontFamily: F.semi,
+    fontSize: 14,
+    color: C.ink,
+    marginBottom: 2,
   },
   brand: { flexDirection: "row", alignItems: "center", gap: 8 },
   brandMark: {

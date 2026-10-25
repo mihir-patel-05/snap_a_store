@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { createRepo } from "../lib/repo";
+import { credentialVersion } from "../lib/server/auth";
 import { fixtureItems } from "./fixtures/items";
 let repo: ReturnType<typeof createRepo>;
 beforeEach(() => {
@@ -114,6 +116,80 @@ describe("Inventory transactions", () => {
     expect(() => repo.authorize(store.id, token)).not.toThrow();
     expect(() => repo.authorize(store.id, "wrong")).toThrow("sign in");
     expect(() => repo.authorize("unknown", token)).toThrow();
+  });
+  it("authorizes one seller session for every seller storefront only", () => {
+    const a = repo.createStore("A store"),
+      b = repo.createStore("B store");
+    const token = repo.createSession(a.store.id);
+    expect(() => repo.authorize(b.store.id, token)).not.toThrow();
+    const outside = randomUUID();
+    repo.db
+      .prepare("INSERT INTO stores VALUES(?,?,?)")
+      .run(outside, "unused", JSON.stringify({ ...a.store, id: outside }));
+    expect(() => repo.authorize(outside, token)).toThrow("another seller");
+    expect(() => repo.authorize(b.store.id, "wrong")).toThrow("sign in");
+  });
+  it("lists storefronts per Square environment in creation order", () => {
+    const first = repo.primaryStore("production:", "Main", "production");
+    expect(repo.primaryStore("production:", "Ignored", "production").id).toBe(
+      first.id,
+    );
+    const key = randomUUID();
+    const second = repo.addStore("production:", "Second", "production", key);
+    expect(repo.addStore("production:", "Second", "production", key).id).toBe(
+      second.id,
+    );
+    repo.createStore("Sandbox", "sandbox");
+    expect(repo.sellerStores("production:").map((s) => s.name)).toEqual([
+      "Main",
+      "Second",
+    ]);
+    expect(repo.sellerStores("sandbox:").map((s) => s.name)).toEqual([
+      "Sandbox",
+    ]);
+  });
+  it("upgrades a single-store database without signing the seller out", () => {
+    const path = mkdtempSync(join(tmpdir(), "snap-upgrade-"));
+    const file = join(path, "legacy.sqlite");
+    const legacy = new Database(file);
+    legacy.exec(`CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, store_id TEXT NOT NULL, credential_version TEXT NOT NULL, expires_at INTEGER NOT NULL);
+      CREATE TABLE primary_stores (environment TEXT PRIMARY KEY, store_id TEXT NOT NULL);
+      CREATE TABLE stores (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL, data TEXT NOT NULL);`);
+    const store = {
+      id: randomUUID(),
+      name: "Existing store",
+      tagline: "Good finds. New beginnings.",
+      createdAt: "2026-10-01T00:00:00.000Z",
+      revision: 3,
+      paymentMode: "production",
+      locationId: "loc",
+    };
+    const token = "legacy-session-token";
+    legacy
+      .prepare("INSERT INTO stores VALUES(?,?,?)")
+      .run(store.id, "hash", JSON.stringify(store));
+    legacy
+      .prepare("INSERT INTO primary_stores VALUES(?,?)")
+      .run("production:loc", store.id);
+    legacy
+      .prepare("INSERT INTO sessions VALUES(?,?,?,?)")
+      .run(
+        createHash("sha256").update(token).digest("hex"),
+        store.id,
+        credentialVersion(),
+        Date.now() + 60_000,
+      );
+    legacy.close();
+    const upgraded = createRepo(file);
+    expect(() => upgraded.authorize(store.id, token)).not.toThrow();
+    expect(upgraded.sellerStores("production:loc")).toMatchObject([
+      { id: store.id, name: "Existing store", listed: 0 },
+    ]);
+    upgraded.close();
+    const reopened = createRepo(file);
+    expect(reopened.sellerStores("production:loc")).toHaveLength(1);
+    reopened.close();
+    rmSync(path, { recursive: true });
   });
   it("does not let one seller publish another seller's private photo", () => {
     const a = repo.createStore("A store"),

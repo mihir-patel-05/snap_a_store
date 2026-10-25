@@ -45,6 +45,11 @@ export type Store = {
   paymentMode: "production" | "sandbox";
   locationId?: string;
 };
+export type StoreSummary = Store & { listed: number; available: number };
+export const CreateStoreRequest = z.object({
+  name: z.string().trim().min(2).max(60),
+  requestKey: z.string().uuid(),
+});
 export type StoreSnapshot = {
   store: Store;
   items: Item[];

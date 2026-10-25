@@ -28,9 +28,13 @@ export function useStore(id: string) {
     let client: ConvexClient | undefined;
     let unsubscribe: (() => void) | undefined;
     const update = (next: StoreSnapshot) => {
-      if (active)
+      if (active && next.store.id === id)
         setData((old) =>
-          !old || next.store.revision >= old.store.revision ? next : old,
+          !old ||
+          old.store.id !== id ||
+          next.store.revision >= old.store.revision
+            ? next
+            : old,
         );
     };
     const refresh = () =>
@@ -65,5 +69,6 @@ export function useStore(id: string) {
       void client?.close();
     };
   }, [id]);
-  return { data, error };
+  // Revisions are per store; never show one storefront's snapshot under another.
+  return { data: data?.store.id === id ? data : null, error };
 }

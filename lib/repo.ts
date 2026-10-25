@@ -7,11 +7,20 @@ import {
   randomUUID,
   timingSafeEqual,
 } from "node:crypto";
-import type { DraftItem, Item, Order, Store, StoreSnapshot } from "./contracts";
+import type {
+  DraftItem,
+  Item,
+  Order,
+  Store,
+  StoreSnapshot,
+  StoreSummary,
+} from "./contracts";
 import { AppError } from "./server/errors";
 import { credentialVersion } from "./server/auth";
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
 const now = () => new Date().toISOString();
+const MAX_STORES = 20;
+const environmentOf = (s: Store) => `${s.paymentMode}:${s.locationId ?? ""}`;
 export function createRepo(
   path = process.env.DATABASE_PATH || "data/snap-live.sqlite",
 ) {
@@ -31,8 +40,12 @@ export function createRepo(
     CREATE TABLE IF NOT EXISTS photos (id TEXT PRIMARY KEY, store_id TEXT NOT NULL, bytes BLOB NOT NULL);
     CREATE TABLE IF NOT EXISTS activity (id TEXT PRIMARY KEY, store_id TEXT NOT NULL, message TEXT NOT NULL, at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS outbox (store_id TEXT PRIMARY KEY, revision INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS seller_stores (store_id TEXT PRIMARY KEY REFERENCES stores(id), environment TEXT NOT NULL, request_key TEXT UNIQUE, created_at TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS items_store ON items(store_id);
-    CREATE INDEX IF NOT EXISTS orders_store ON orders(store_id);`);
+    CREATE INDEX IF NOT EXISTS orders_store ON orders(store_id);
+    CREATE INDEX IF NOT EXISTS seller_stores_environment ON seller_stores(environment, created_at);
+    INSERT OR IGNORE INTO seller_stores (store_id, environment, created_at)
+      SELECT p.store_id, p.environment, json_extract(s.data, '$.createdAt') FROM primary_stores p JOIN stores s ON s.id = p.store_id;`);
   function get<T>(sql: string, ...args: string[]): T | undefined {
     const row = db.prepare(sql).get(...args) as { data: string } | undefined;
     return row ? (JSON.parse(row.data) as T) : undefined;
@@ -83,6 +96,37 @@ export function createRepo(
         now(),
       );
   }
+  // Every store belongs to the deployment's single seller; seller_stores lists them per Square environment.
+  const createStore = db.transaction(
+    (
+      name: string,
+      mode: Store["paymentMode"] = "production",
+      requestKey?: string,
+    ) => {
+      const s: Store = {
+        id: randomUUID(),
+        name,
+        tagline: "Good finds. New beginnings.",
+        createdAt: now(),
+        revision: 0,
+        paymentMode: mode,
+        locationId: process.env.SQUARE_LOCATION_ID,
+      };
+      const token = randomBytes(32).toString("hex");
+      db.prepare("INSERT INTO stores VALUES(?,?,?)").run(
+        s.id,
+        hash(token),
+        JSON.stringify(s),
+      );
+      db.prepare("INSERT INTO seller_stores VALUES(?,?,?,?)").run(
+        s.id,
+        environmentOf(s),
+        requestKey ?? null,
+        s.createdAt,
+      );
+      return { store: s, token };
+    },
+  );
   function snapshot(id: string): StoreSnapshot {
     const s = store(id);
     if (!s) throw new AppError(404, "Store not found.");
@@ -135,24 +179,46 @@ export function createRepo(
           .all() as { data: string }[]
       ).map((r) => JSON.parse(r.data) as Order);
     },
-    createStore(name: string, mode: Store["paymentMode"] = "production") {
-      const s: Store = {
-        id: randomUUID(),
-        name,
-        tagline: "Good finds. New beginnings.",
-        createdAt: now(),
-        revision: 0,
-        paymentMode: mode,
-        locationId: process.env.SQUARE_LOCATION_ID,
-      };
-      const token = randomBytes(32).toString("hex");
-      db.prepare("INSERT INTO stores VALUES(?,?,?)").run(
-        s.id,
-        hash(token),
-        JSON.stringify(s),
-      );
-      return { store: s, token };
+    createStore,
+    sellerStores(environment: string): StoreSummary[] {
+      const ids = db
+        .prepare(
+          "SELECT store_id FROM seller_stores WHERE environment=? ORDER BY created_at, rowid",
+        )
+        .all(environment) as { store_id: string }[];
+      return ids.map(({ store_id }) => {
+        const snap = snapshot(store_id);
+        return {
+          ...snap.store,
+          listed: snap.items.length,
+          available: snap.items.reduce((sum, i) => sum + i.available, 0),
+        };
+      });
     },
+    addStore: db.transaction(
+      (
+        environment: string,
+        name: string,
+        mode: Store["paymentMode"],
+        requestKey: string,
+      ) => {
+        const existing = db
+          .prepare("SELECT store_id FROM seller_stores WHERE request_key=?")
+          .get(requestKey) as { store_id: string } | undefined;
+        if (existing) return store(existing.store_id)!;
+        const { count } = db
+          .prepare(
+            "SELECT COUNT(*) AS count FROM seller_stores WHERE environment=?",
+          )
+          .get(environment) as { count: number };
+        if (count >= MAX_STORES)
+          throw new AppError(
+            409,
+            `You can run up to ${MAX_STORES} storefronts. Rename one you no longer use.`,
+          );
+        return createStore(name, mode, requestKey).store;
+      },
+    ),
     primaryStore(
       environment: string,
       name: string,
@@ -163,7 +229,7 @@ export function createRepo(
           .prepare("SELECT store_id FROM primary_stores WHERE environment=?")
           .get(environment) as { store_id: string } | undefined;
         if (existing) return store(existing.store_id)!;
-        const created = this.createStore(name, mode).store;
+        const created = createStore(name, mode).store;
         db.prepare("INSERT INTO primary_stores VALUES(?,?)").run(
           environment,
           created.id,
@@ -171,6 +237,8 @@ export function createRepo(
         return created;
       })();
     },
+    // store_id records the storefront opened at sign-in (kept for rollback compatibility).
+    // A session authorizes every seller storefront; see authorize().
     createSession(id: string) {
       const token = randomBytes(32).toString("hex");
       db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(Date.now());
@@ -185,19 +253,18 @@ export function createRepo(
     session(token: string) {
       const row = db
         .prepare(
-          "SELECT store_id FROM sessions WHERE token_hash=? AND credential_version=? AND expires_at>?",
+          "SELECT 1 FROM sessions WHERE token_hash=? AND credential_version=? AND expires_at>?",
         )
-        .get(hash(token), credentialVersion(), Date.now()) as
-        { store_id: string } | undefined;
+        .get(hash(token), credentialVersion(), Date.now());
       if (!row)
         throw new AppError(401, "Please sign in to your seller account.");
-      return store(row.store_id)!;
     },
     revokeSession(token: string) {
       db.prepare("DELETE FROM sessions WHERE token_hash=?").run(hash(token));
     },
     authorize(id: string, token: string) {
-      if (this.session(token).id !== id)
+      this.session(token);
+      if (!db.prepare("SELECT 1 FROM seller_stores WHERE store_id=?").get(id))
         throw new AppError(403, "This store belongs to another seller.");
     },
     limit: db.transaction((key: string, maximum: number, windowMs = 60_000) => {

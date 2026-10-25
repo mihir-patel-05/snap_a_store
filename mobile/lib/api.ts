@@ -4,18 +4,29 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import type {
   DraftItem,
   Store,
+  StoreSummary,
   StoreSnapshot,
   Integration,
   Comparison,
 } from "../../lib/contracts";
-export type { DraftItem, Store, StoreSnapshot, Integration, Comparison };
+export type {
+  DraftItem,
+  Store,
+  StoreSummary,
+  StoreSnapshot,
+  Integration,
+  Comparison,
+};
 export const API_URL = (
   process.env.EXPO_PUBLIC_API_URL ||
   (Platform.OS === "android" ? "http://10.0.2.2:3000" : "http://localhost:3000")
 ).replace(/\/$/, "");
 export const money = (value: number) => `$${value.toFixed(value % 1 ? 2 : 0)}`;
 const key = "snap-owner-v2";
+// `store` is the storefront currently open on this device. The storefront list is
+// fetched from the server, never kept in SecureStore (values should stay small).
 export type Session = { store: Store; token: string };
+export type SellerStores = { store: Store; stores: StoreSummary[] };
 export async function loadSession(): Promise<Session | null> {
   const value =
     Platform.OS === "web"
@@ -32,7 +43,7 @@ export async function clearSession() {
   else await SecureStore.deleteItemAsync(key);
 }
 export async function saveSession(session: Session) {
-  const text = JSON.stringify(session);
+  const text = JSON.stringify({ token: session.token, store: session.store });
   if (Platform.OS === "web") await AsyncStorage.setItem(key, text);
   else await SecureStore.setItemAsync(key, text);
 }

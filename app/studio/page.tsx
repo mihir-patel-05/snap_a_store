@@ -21,10 +21,15 @@ import {
   money,
   type DraftItem,
   type Store,
+  type StoreSummary,
   type Comparison,
 } from "@/lib/contracts";
+type SellerStores = { store: Store; stores: StoreSummary[] };
+const activeStoreKey = "snap-active-store";
 export default function Studio() {
   const [store, setStore] = useState<Store | null>(null),
+    [stores, setStores] = useState<StoreSummary[]>([]),
+    [newStoreName, setNewStoreName] = useState<string | null>(null),
     [restoredStore, setRestoredStore] = useState(""),
     [publishLocked, setPublishLocked] = useState(false),
     [drafts, setDrafts] = useState<DraftItem[]>([]),
@@ -41,13 +46,11 @@ export default function Studio() {
       note: string;
     } | null>(null);
   const input = useRef<HTMLInputElement>(null),
-    key = useRef("");
+    key = useRef(""),
+    storeKey = useRef("");
   useEffect(() => {
-    api<{ store: Store }>("/auth/session")
-      .then((r) => {
-        setStore(r.store);
-        setName(r.store.name);
-      })
+    api<SellerStores>("/auth/session")
+      .then(openSession)
       .catch(() => {})
       .finally(() => setBooted(true));
   }, []);
@@ -56,15 +59,17 @@ export default function Studio() {
       setRestoredStore("");
       return;
     }
+    // Drafts belong to one storefront; switching must never carry them to another.
+    let draft: { items?: DraftItem[]; key?: string; locked?: boolean } | null =
+      null;
     try {
-      const saved = localStorage.getItem(`snap-draft-v2:${store.id}`);
-      if (saved) {
-        const draft = JSON.parse(saved);
-        setDrafts(draft.items || []);
-        key.current = draft.key || "";
-        setPublishLocked(Boolean(draft.locked));
-      }
+      draft = JSON.parse(
+        localStorage.getItem(`snap-draft-v2:${store.id}`) || "null",
+      );
     } catch {}
+    setDrafts(draft?.items || []);
+    key.current = draft?.key || "";
+    setPublishLocked(Boolean(draft?.locked));
     setRestoredStore(store.id);
   }, [store?.id]);
   useEffect(() => {
@@ -84,14 +89,53 @@ export default function Studio() {
     if (!store) throw new Error("Sign in to manage your store.");
     return store;
   }
+  function openSession(session: SellerStores) {
+    let saved = "";
+    try {
+      saved = localStorage.getItem(activeStoreKey) || "";
+    } catch {}
+    setStores(session.stores);
+    selectStore(session.stores.find((s) => s.id === saved) || session.store);
+  }
+  function selectStore(next: Store) {
+    setStore(next);
+    setName(next.name);
+    setUrl("");
+    setComparisons(null);
+    try {
+      localStorage.setItem(activeStoreKey, next.id);
+    } catch {}
+  }
+  async function loadStores() {
+    try {
+      setStores((await api<{ stores: StoreSummary[] }>("/stores")).stores);
+    } catch {}
+  }
+  function openStore() {
+    void work("Opening a new storefront", async () => {
+      // One key per intended storefront, so a retried request cannot create a duplicate.
+      storeKey.current ||= await newRequestKey();
+      const result = await api<SellerStores>("/stores", {
+        method: "POST",
+        body: JSON.stringify({
+          name: newStoreName,
+          requestKey: storeKey.current,
+        }),
+      });
+      storeKey.current = "";
+      setNewStoreName(null);
+      setStores(result.stores);
+      selectStore(result.store);
+    });
+  }
   async function signIn() {
     await work("Signing in", async () => {
-      const result = await api<{ store: Store }>("/auth/login", {
+      const { store } = await api<{ store: Store }>("/auth/login", {
         method: "POST",
         body: JSON.stringify({ email, password }),
       });
-      setStore(result.store);
-      setName(result.store.name);
+      const { stores } = await api<{ stores: StoreSummary[] }>("/stores");
+      openSession({ store, stores });
       setPassword("");
     });
   }
@@ -99,6 +143,8 @@ export default function Studio() {
     await work("Signing out", async () => {
       await api("/auth/logout", { method: "POST", body: "{}" });
       setStore(null);
+      setStores([]);
+      setNewStoreName(null);
       setDrafts([]);
       setUrl("");
     });
@@ -151,6 +197,7 @@ export default function Studio() {
         setUrl(r.url);
         setDrafts([]);
         setPublishLocked(false);
+        void loadStores();
       } catch (e) {
         if (
           [400, 401, 403, 503].includes((e as { status?: number }).status || 0)
@@ -232,7 +279,7 @@ export default function Studio() {
           <h2>{name}</h2>
           <div className="side-nav">
             <span className="active">
-              <ScanLine size={19} /> Create a store
+              <ScanLine size={19} /> Add finds
             </span>
             <a href={store ? `/s/${store.id}` : "#start"}>
               <QrCode size={19} /> Storefront <ExternalLink size={14} />
@@ -251,6 +298,85 @@ export default function Studio() {
           </div>
         </aside>
         <section className="studio-main" id="start">
+          <nav className="store-switcher" aria-label="Your storefronts">
+            <span className="eyebrow">YOUR STOREFRONTS</span>
+            <div className="store-chips">
+              {stores.map((s) => (
+                <button
+                  key={s.id}
+                  className={
+                    s.id === store.id ? "store-chip active" : "store-chip"
+                  }
+                  aria-current={s.id === store.id ? "true" : undefined}
+                  disabled={!!busy}
+                  onClick={() => {
+                    if (s.id === store.id) return;
+                    selectStore(s);
+                    void loadStores();
+                  }}
+                >
+                  <span className="chip-monogram">{s.name.slice(0, 1)}</span>
+                  <span>
+                    {s.name}
+                    <small>
+                      {s.listed
+                        ? s.available
+                          ? `${s.available} available`
+                          : "Sold out"
+                        : "No finds yet"}
+                    </small>
+                  </span>
+                </button>
+              ))}
+              {newStoreName === null ? (
+                <button
+                  className="store-chip add"
+                  disabled={!!busy}
+                  onClick={() => setNewStoreName("")}
+                >
+                  <Plus size={15} /> New storefront
+                </button>
+              ) : (
+                <form
+                  className="new-store"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    openStore();
+                  }}
+                >
+                  <label className="sr-only" htmlFor="new-store-name">
+                    New storefront name
+                  </label>
+                  <input
+                    id="new-store-name"
+                    autoFocus
+                    required
+                    maxLength={60}
+                    placeholder="Name your storefront"
+                    value={newStoreName}
+                    onChange={(e) => {
+                      setNewStoreName(e.target.value);
+                      storeKey.current = "";
+                    }}
+                  />
+                  <button
+                    className="button primary"
+                    disabled={!!busy || newStoreName.trim().length < 2}
+                  >
+                    Open storefront
+                  </button>
+                  <button
+                    type="button"
+                    className="text-link"
+                    disabled={!!busy}
+                    onClick={() => setNewStoreName(null)}
+                  >
+                    Cancel
+                  </button>
+                </form>
+              )}
+            </div>
+          </nav>
           <div className="section-heading">
             <div>
               <span className="eyebrow">
