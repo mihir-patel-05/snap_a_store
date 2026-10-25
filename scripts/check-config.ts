@@ -12,7 +12,7 @@ try {
   for (const key of ["ANTHROPIC_API_KEY", "MAINTENANCE_SECRET"])
     requireConfig(key);
   if (
-    !process.env.GOOGLE_CLIENT_ID ||
+    (!process.env.GOOGLE_CLIENT_ID && !process.env.APPLE_SERVICES_ID) ||
     process.env.SELLER_EMAIL ||
     process.env.SELLER_PASSWORD_HASH
   ) {

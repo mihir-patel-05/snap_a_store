@@ -22,7 +22,7 @@ import {
 import { verifyLogin } from "./auth";
 import {
   authMethods,
-  startGoogle,
+  startSignIn,
   oauthCallback,
   exchangeNative,
   squareLaunch,
@@ -88,9 +88,9 @@ export function integrations(): Integration[] {
     },
     {
       name: "Apify",
-      feature: "Real market comparisons",
+      feature: "Market-checked scan prices",
       status: has("APIFY_TOKEN") ? "ready" : "setup",
-      detail: "Active eBay listings with source links",
+      detail: "Claude prices identifiable items against active eBay listings",
     },
     {
       name: "Cartesia",
@@ -232,7 +232,8 @@ async function route(req: Request): Promise<Response> {
   if (method === "GET" && p[0] === "ready") {
     requireDeploymentConfig();
     requireConfig("ANTHROPIC_API_KEY");
-    if (!authMethods().google) {
+    const methods = authMethods();
+    if (!methods.google && !methods.apple) {
       requireConfig("SELLER_EMAIL");
       requireConfig("SELLER_PASSWORD_HASH");
     }
@@ -243,13 +244,18 @@ async function route(req: Request): Promise<Response> {
   if (p.join("/") === "auth/methods" && method === "GET")
     return json(authMethods());
   if (p.join("/") === "auth/google/start" && method === "GET")
-    return startGoogle(url);
+    return startSignIn(url, "google");
   if (p.join("/") === "auth/google/callback" && method === "GET")
     return oauthCallback(req, "google");
+  if (p.join("/") === "auth/apple/start" && method === "GET")
+    return startSignIn(url, "apple");
+  if (p.join("/") === "auth/apple/callback" && method === "GET")
+    return oauthCallback(req, "apple");
   if (p.join("/") === "auth/square/authorize" && method === "GET")
     return authorizeSquare(url);
   if (p.join("/") === "auth/square/callback" && method === "GET")
     return oauthCallback(req, "square");
+  // The one-time mobile grant is provider-neutral; Apple sign-in uses it too.
   if (p.join("/") === "auth/google/exchange" && method === "POST") {
     const data = z
       .object({
@@ -505,6 +511,7 @@ async function route(req: Request): Promise<Response> {
       },
     });
   }
+  // Scans now research prices themselves; kept for app builds that still call it.
   if (method === "POST" && p[0] === "compare") {
     const data = z
       .object({ storeId: z.string(), name: z.string().trim().min(2).max(100) })

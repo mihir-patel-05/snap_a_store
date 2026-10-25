@@ -7,7 +7,15 @@ import {
   it,
   vi,
 } from "vitest";
-import { createHash, createHmac, randomUUID } from "node:crypto";
+import {
+  createHash,
+  createHmac,
+  createPublicKey,
+  generateKeyPairSync,
+  randomUUID,
+  sign,
+  verify,
+} from "node:crypto";
 import { OAuth2Client, LoginTicket } from "google-auth-library";
 import { handle } from "../lib/server/api";
 import { repo } from "../lib/repo";
@@ -247,6 +255,201 @@ describe("Google signup and isolated seller sessions", () => {
     expect(
       (await post("/auth/google/exchange", { code, verifier })).status,
     ).toBe(400);
+  });
+});
+describe("Sign in with Apple", () => {
+  // Apple's ID-token signing key (RS256) and the seller's .p8 key (ES256).
+  const appleSigning = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const p8 = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const jwk = {
+    ...appleSigning.publicKey.export({ format: "jwk" }),
+    kid: "apple-kid",
+    alg: "RS256",
+    use: "sig",
+  };
+  const part = (v: unknown) =>
+    Buffer.from(JSON.stringify(v)).toString("base64url");
+  function idToken(
+    claims: Record<string, unknown>,
+    key = appleSigning.privateKey,
+  ) {
+    const input =
+      part({ alg: "RS256", kid: "apple-kid" }) +
+      "." +
+      part({
+        iss: "https://appleid.apple.com",
+        aud: "com.snapastore.web",
+        exp: Math.floor(Date.now() / 1000) + 300,
+        iat: Math.floor(Date.now() / 1000),
+        ...claims,
+      });
+    return (
+      input +
+      "." +
+      sign("sha256", Buffer.from(input), key).toString("base64url")
+    );
+  }
+  function apple(token: () => string) {
+    const fetch = vi.fn(async (url: string | URL | Request) => {
+      const s = String(url);
+      if (s === "https://appleid.apple.com/auth/keys")
+        return Response.json({ keys: [jwk] });
+      if (s === "https://appleid.apple.com/auth/token")
+        return Response.json({ id_token: token() });
+      throw new Error("Unexpected call: " + s);
+    });
+    vi.stubGlobal("fetch", fetch);
+    return fetch;
+  }
+  beforeEach(() => {
+    vi.stubEnv("APPLE_SERVICES_ID", "com.snapastore.web");
+    vi.stubEnv("APPLE_TEAM_ID", "TEAM123456");
+    vi.stubEnv("APPLE_KEY_ID", "KEY1234567");
+    // Hosted variables keep the .p8 file on one line with \n escapes.
+    vi.stubEnv(
+      "APPLE_PRIVATE_KEY",
+      String(p8.privateKey.export({ format: "pem", type: "pkcs8" })).replace(
+        /\n/g,
+        "\\n",
+      ),
+    );
+  });
+  async function beginApple(query = "") {
+    const r = await get("/auth/apple/start" + query);
+    expect(r.status).toBe(303);
+    const target = new URL(r.headers.get("location")!);
+    return {
+      state: target.searchParams.get("state")!,
+      nonce: target.searchParams.get("nonce")!,
+      cookie: r.headers.get("set-cookie")!.split(";")[0],
+      target,
+    };
+  }
+  async function appleLogin(subject: string) {
+    const flow = await beginApple();
+    const fetch = apple(() => idToken({ sub: subject, nonce: flow.nonce }));
+    const r = await get(
+      "/auth/apple/callback?state=" + flow.state + "&code=apple-code",
+      flow.cookie,
+    );
+    const cookie = r.headers
+      .getSetCookie()
+      .find((c) => c.startsWith("snap_owner="));
+    return { r, fetch, token: cookie?.split(";")[0].slice(11) };
+  }
+  it("advertises Apple and asks for no name or email, so the callback is a GET", async () => {
+    expect(await (await get("/auth/methods")).json()).toMatchObject({
+      apple: true,
+    });
+    const { target } = await beginApple();
+    expect(target.origin + target.pathname).toBe(
+      "https://appleid.apple.com/auth/authorize",
+    );
+    expect(target.searchParams.get("client_id")).toBe("com.snapastore.web");
+    expect(target.searchParams.get("redirect_uri")).toBe(
+      base + "/api/auth/apple/callback",
+    );
+    expect(target.searchParams.get("response_mode")).toBe("query");
+    expect(target.searchParams.has("scope")).toBe(false);
+  });
+  it("signs the client secret with the .p8 key and creates one store per Apple subject", async () => {
+    const { r, fetch, token } = await appleLogin("001234.apple-user");
+    expect(r.headers.get("location")).toBe(base + "/studio");
+    const store = repo.session(token!);
+    expect(store.paymentProvider).toBe("square_oauth");
+    const body = new URLSearchParams(
+      String(
+        (
+          fetch.mock.calls.find(
+            (c) => String(c[0]) === "https://appleid.apple.com/auth/token",
+          ) as unknown as [string, RequestInit]
+        )[1].body,
+      ),
+    );
+    expect(body.get("redirect_uri")).toBe(base + "/api/auth/apple/callback");
+    const [header, claims, signature] = body.get("client_secret")!.split(".");
+    expect(
+      verify(
+        "sha256",
+        Buffer.from(header + "." + claims),
+        { key: createPublicKey(p8.privateKey), dsaEncoding: "ieee-p1363" },
+        Buffer.from(signature, "base64url"),
+      ),
+    ).toBe(true);
+    expect(JSON.parse(Buffer.from(header, "base64url").toString())).toEqual({
+      alg: "ES256",
+      kid: "KEY1234567",
+    });
+    expect(
+      JSON.parse(Buffer.from(claims, "base64url").toString()),
+    ).toMatchObject({
+      iss: "TEAM123456",
+      sub: "com.snapastore.web",
+      aud: "https://appleid.apple.com",
+    });
+    expect(repo.session((await appleLogin("001234.apple-user")).token!).id).toBe(
+      store.id,
+    );
+    const other = repo.session((await appleLogin("009999.other")).token!);
+    expect(other.id).not.toBe(store.id);
+    // An Apple subject never opens a Google seller's store.
+    expect((await webLogin("001234.apple-user")).store.id).not.toBe(store.id);
+  });
+  it("rejects a wrong nonce, a forged signature, and another app's audience", async () => {
+    for (const forged of [
+      (nonce: string) => idToken({ sub: "user", nonce: nonce + "x" }),
+      (nonce: string) =>
+        idToken(
+          { sub: "user", nonce },
+          generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey,
+        ),
+      (nonce: string) => idToken({ sub: "user", nonce, aud: "other.app" }),
+    ]) {
+      const flow = await beginApple();
+      apple(() => forged(flow.nonce));
+      const r = await get(
+        "/auth/apple/callback?state=" + flow.state + "&code=apple-code",
+        flow.cookie,
+      );
+      expect(
+        new URL(r.headers.get("location")!).searchParams.get("auth_error"),
+      ).toContain("Apple could not verify");
+    }
+    expect(
+      repo.db.prepare("SELECT COUNT(*) AS count FROM sessions").get(),
+    ).toEqual({ count: 0 });
+  });
+  it("returns canceled Apple sign-ins and mobile grants to the app", async () => {
+    const canceled = await beginApple();
+    const r = await get(
+      "/auth/apple/callback?state=" +
+        canceled.state +
+        "&error=user_cancelled_authorize",
+      canceled.cookie,
+    );
+    expect(r.headers.get("location")).toContain("auth_error=Authorization");
+    const verifier = "c".repeat(64),
+      challenge = createHash("sha256").update(verifier).digest("base64url");
+    const flow = await beginApple("?client=native&code_challenge=" + challenge);
+    apple(() => idToken({ sub: "mobile-user", nonce: flow.nonce }));
+    const callback = await get(
+      "/auth/apple/callback?state=" + flow.state + "&code=apple-code",
+      flow.cookie,
+    );
+    const destination = new URL(callback.headers.get("location")!);
+    expect(destination.href.startsWith("snapastore://auth")).toBe(true);
+    const result = await post("/auth/google/exchange", {
+      code: destination.searchParams.get("code"),
+      verifier,
+    });
+    expect(result.status).toBe(200);
+  });
+  it("is unavailable until every Apple variable is set", async () => {
+    vi.stubEnv("APPLE_KEY_ID", "");
+    expect(await (await get("/auth/methods")).json()).toMatchObject({
+      apple: false,
+    });
+    expect((await get("/auth/apple/start")).status).toBe(503);
   });
 });
 describe("Per-seller Square onboarding and payment routing", () => {

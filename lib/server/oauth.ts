@@ -9,10 +9,12 @@ import {
   squareOrigin,
 } from "./square-accounts";
 import { syncInventory } from "../providers/convex";
+import { appleAuthorizeUrl, appleConfigured, appleIdentity } from "./apple";
 
 type Client = "web" | "native";
+type SignIn = "google" | "apple";
 type Ticket = {
-  kind: "google" | "square" | "square-launch" | "session";
+  kind: SignIn | "square" | "square-launch" | "session";
   client: Client;
   nonce?: string;
   verifier?: string;
@@ -67,6 +69,7 @@ export function authMethods() {
     google: Boolean(
       process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET,
     ),
+    apple: appleConfigured(),
     password: Boolean(
       process.env.SELLER_EMAIL && process.env.SELLER_PASSWORD_HASH,
     ),
@@ -97,23 +100,28 @@ function redirect(destination: string, state?: string) {
 export function sessionCookie(value: string, expired = false) {
   return `snap_owner=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${expired ? 0 : 2592000}${publicBase().startsWith("https:") ? "; Secure" : ""}`;
 }
-export function startGoogle(url: URL) {
+const appleRedirect = () => publicBase() + "/api/auth/apple/callback";
+export function startSignIn(url: URL, provider: SignIn) {
   const client: Client =
     url.searchParams.get("client") === "native" ? "native" : "web";
   const challenge = url.searchParams.get("code_challenge") || undefined;
   if (client === "native" && !/^[A-Za-z0-9_-]{43}$/.test(challenge || ""))
     throw new AppError(400, "A valid mobile sign-in challenge is required.");
+  if (provider === "apple" && !appleConfigured())
+    throw new AppError(503, "Apple sign-in has not been configured.");
   const nonce = random(),
-    verifier = random(),
-    google = googleClient();
+    verifier = random();
   const state = put({
-    kind: "google",
+    kind: provider,
     client,
     nonce,
     verifier,
     challenge,
     mode: paymentEnvironment(),
   });
+  if (provider === "apple")
+    return redirect(appleAuthorizeUrl(appleRedirect(), state, nonce), state);
+  const google = googleClient();
   const target = new URL(
     google.generateAuthUrl({
       scope: ["openid", "email", "profile"],
@@ -158,7 +166,7 @@ export function authorizeSquare(url: URL) {
   }).toString();
   return redirect(target.toString(), state);
 }
-function callbackTicket(req: Request, kind: "google" | "square") {
+function callbackTicket(req: Request, kind: SignIn | "square") {
   const url = new URL(req.url),
     state = url.searchParams.get("state") || "";
   const browserState =
@@ -175,17 +183,59 @@ function callbackTicket(req: Request, kind: "google" | "square") {
     );
   return take(state, kind);
 }
+// Use the stable subject, never an email match, to select an account.
+async function googleStore(code: string, ticket: Ticket) {
+  const client = googleClient();
+  const { tokens } = await client.getToken({
+    code,
+    codeVerifier: ticket.verifier,
+  });
+  if (!tokens.id_token)
+    throw new AppError(401, "Google did not return an identity token.");
+  const identity = await client.verifyIdToken({
+    idToken: tokens.id_token,
+    audience: requireConfig("GOOGLE_CLIENT_ID"),
+  });
+  const payload = identity.getPayload();
+  if (
+    !payload?.sub ||
+    !payload.email ||
+    payload.email_verified !== true ||
+    !equal(String(payload.nonce || ""), ticket.nonce || "")
+  )
+    throw new AppError(401, "Google could not verify this account.");
+  return repo.googleStore(
+    payload.sub,
+    (payload.given_name ? payload.given_name + "'s store" : "My store").slice(
+      0,
+      60,
+    ),
+    paymentEnvironment(),
+  );
+}
+async function appleStore(code: string, ticket: Ticket) {
+  const identity = await appleIdentity(code, appleRedirect());
+  if (!ticket.nonce || !equal(identity.nonce, ticket.nonce))
+    throw new AppError(401, "Apple could not verify this account.");
+  // Apple subjects share the federated account table under their own prefix;
+  // Google subjects are numeric, so the two can never collide.
+  return repo.googleStore(
+    "apple:" + identity.sub,
+    "My store",
+    paymentEnvironment(),
+  );
+}
 export async function oauthCallback(
   req: Request,
-  provider: "google" | "square",
+  provider: SignIn | "square",
 ) {
   const ticket = callbackTicket(req, provider),
     url = new URL(req.url);
   const destination = new URL(
     ticket.client === "native"
-      ? provider === "google"
-        ? "snapastore://auth"
-        : "snapastore://square"
+      ? provider === "square"
+        ? "snapastore://square"
+        : "snapastore://auth"
       : publicBase() + "/studio",
   );
   try {
@@ -207,34 +257,10 @@ export async function oauthCallback(
       destination.searchParams.set("square", "connected");
       return redirect(destination.toString());
     }
-    const client = googleClient();
-    const { tokens } = await client.getToken({
-      code,
-      codeVerifier: ticket.verifier,
-    });
-    if (!tokens.id_token)
-      throw new AppError(401, "Google did not return an identity token.");
-    const identity = await client.verifyIdToken({
-      idToken: tokens.id_token,
-      audience: requireConfig("GOOGLE_CLIENT_ID"),
-    });
-    const payload = identity.getPayload();
-    if (
-      !payload?.sub ||
-      !payload.email ||
-      payload.email_verified !== true ||
-      !equal(String(payload.nonce || ""), ticket.nonce || "")
-    )
-      throw new AppError(401, "Google could not verify this account.");
-    // Use the stable subject, never an email match, to select an account.
-    const store = repo.googleStore(
-      payload.sub,
-      (payload.given_name ? payload.given_name + "'s store" : "My store").slice(
-        0,
-        60,
-      ),
-      paymentEnvironment(),
-    );
+    const store =
+      provider === "apple"
+        ? await appleStore(code, ticket)
+        : await googleStore(code, ticket);
     if (ticket.client === "native") {
       const grant = put(
         {

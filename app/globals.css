@@ -858,14 +858,6 @@ footer > span {
 .draft-body details .rationale-note {
   font-style: italic;
 }
-.compare-button {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 10px;
-  font-weight: 600;
-  padding: 9px 0;
-}
 .comps {
   margin-top: 10px;
 }
@@ -2161,6 +2153,13 @@ footer > span {
 .google-sign-in:focus-visible {
   outline: 3px solid var(--ink);
   outline-offset: 3px;
+}
+/* Apple's guidelines: a black button with the white Apple logo. */
+.google-sign-in.apple-sign-in {
+  margin-top: 0;
+  border-color: #000;
+  background: #000;
+  color: #fff;
 }
 .auth-divider {
   font-size: 13px;
