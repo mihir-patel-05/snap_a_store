@@ -15,6 +15,7 @@
 }
 body {
   margin: 0;
+  overflow-x: clip;
   background: var(--paper);
   color: var(--ink);
   font-family: var(--sans);
@@ -88,8 +89,35 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid var(--line);
   gap: 20px;
+  color: var(--paper);
+  position: relative;
+  isolation: isolate;
+}
+/* The green band bleeds to the viewport edges while the content keeps the page gutter. */
+.site-header::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 100vw;
+  transform: translateX(-50%);
+  background: var(--ink);
+  z-index: -1;
+}
+.site-header .brand-icon {
+  background: none;
+  width: 34px;
+  height: 34px;
+  margin-right: 8px;
+}
+.site-header .brand-icon svg {
+  width: 30px;
+  height: 30px;
+}
+.site-header .bag-button b {
+  color: var(--ink);
 }
 .brand {
   font-size: 24px;

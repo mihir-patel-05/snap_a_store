@@ -786,15 +786,16 @@ function SellerApp() {
       </SafeAreaView>
     );
   return (
-    <SafeAreaView style={s.safe} edges={["top", "left", "right"]}>
+    <SafeAreaView style={s.safeBand} edges={["top", "left", "right"]}>
+      <StatusBar style="light" />
       <KeyboardAvoidingView
-        style={s.flex}
+        style={[s.flex, { backgroundColor: C.paper }]}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <View style={s.topBar}>
           <View style={s.brand}>
             <View style={s.brandMark}>
-              <BrandMark size={22} />
+              <BrandMark size={30} />
             </View>
             <Text style={s.brandText}>
               snap<Text style={s.brandA}>a</Text>store
@@ -2029,6 +2030,8 @@ function InventoryRow({
 const s = StyleSheet.create({
   flex: { flex: 1, minWidth: 0 },
   safe: { flex: 1, backgroundColor: C.paper },
+  // The signed-in screen's status bar area shares the green brand band.
+  safeBand: { flex: 1, backgroundColor: C.ink },
   topBar: {
     minHeight: 72,
     paddingHorizontal: 20,
@@ -2037,8 +2040,7 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: C.line,
+    backgroundColor: C.ink,
   },
   storePill: {
     flexDirection: "row",
@@ -2050,8 +2052,6 @@ const s = StyleSheet.create({
     paddingLeft: 4,
     paddingRight: 12,
     borderRadius: R.pill,
-    borderWidth: 1,
-    borderColor: C.line,
     backgroundColor: C.white,
   },
   storePillText: {
@@ -2081,10 +2081,8 @@ const s = StyleSheet.create({
   },
   brand: { flexDirection: "row", alignItems: "center", gap: 10 },
   brandMark: {
-    width: 36,
-    height: 36,
-    borderRadius: 11,
-    backgroundColor: C.ink,
+    width: 34,
+    height: 34,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -2093,7 +2091,7 @@ const s = StyleSheet.create({
     fontSize: 24,
     lineHeight: 30,
     letterSpacing: -1,
-    color: C.ink,
+    color: C.paper,
   },
   brandA: { fontFamily: F.regular, fontSize: 20 },
   avatar: {
