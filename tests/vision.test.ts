@@ -6,6 +6,7 @@ vi.mock("@anthropic-ai/sdk", () => ({
   },
 }));
 import { scanPhoto } from "../lib/providers/vision";
+import { VISION_SYSTEM_PROMPT } from "../lib/providers/vision-prompt";
 afterEach(() => {
   vi.unstubAllEnvs();
   create.mockReset();
@@ -41,6 +42,7 @@ describe("Claude photo scan", () => {
     );
     const items = await scanPhoto(Buffer.from("jpeg"));
     const params = create.mock.calls[0][0];
+    expect(params.system).toBe(VISION_SYSTEM_PROMPT);
     expect(params.tool_choice).toBeUndefined();
     expect(params.tools).toBeUndefined();
     expect(params.output_config.format.type).toBe("json_schema");
