@@ -14,13 +14,18 @@ import type {
   Store,
   StoreSnapshot,
   StoreSummary,
+  StoreBusiness,
 } from "./contracts";
 import { AppError } from "./server/errors";
 import { credentialVersion } from "./server/auth";
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
 const now = () => new Date().toISOString();
 const MAX_STORES = 20;
+// seller_stores.environment is the owning account's scope. The password seller has
+// one scope per Square environment and location; each Google seller has their own.
 const environmentOf = (s: Store) => `${s.paymentMode}:${s.locationId ?? ""}`;
+export const googleScope = (subject: string, mode: Store["paymentMode"]) =>
+  `google:${mode}:${subject}`;
 export function createRepo(
   path = process.env.DATABASE_PATH || "data/snap-live.sqlite",
 ) {
@@ -40,13 +45,18 @@ export function createRepo(
     CREATE TABLE IF NOT EXISTS photos (id TEXT PRIMARY KEY, store_id TEXT NOT NULL, bytes BLOB NOT NULL);
     CREATE TABLE IF NOT EXISTS activity (id TEXT PRIMARY KEY, store_id TEXT NOT NULL, message TEXT NOT NULL, at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS outbox (store_id TEXT PRIMARY KEY, revision INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS google_accounts (subject TEXT NOT NULL, environment TEXT NOT NULL, store_id TEXT NOT NULL REFERENCES stores(id), PRIMARY KEY(subject, environment));
+    CREATE TABLE IF NOT EXISTS oauth_tickets (hash TEXT PRIMARY KEY, data TEXT NOT NULL, expires_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS square_connections (store_id TEXT PRIMARY KEY REFERENCES stores(id), merchant_id TEXT NOT NULL, encrypted TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS seller_stores (store_id TEXT PRIMARY KEY REFERENCES stores(id), environment TEXT NOT NULL, request_key TEXT UNIQUE, created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS convex_removals (store_id TEXT PRIMARY KEY);
     CREATE INDEX IF NOT EXISTS items_store ON items(store_id);
     CREATE INDEX IF NOT EXISTS orders_store ON orders(store_id);
     CREATE INDEX IF NOT EXISTS seller_stores_environment ON seller_stores(environment, created_at);
     INSERT OR IGNORE INTO seller_stores (store_id, environment, created_at)
-      SELECT p.store_id, p.environment, json_extract(s.data, '$.createdAt') FROM primary_stores p JOIN stores s ON s.id = p.store_id;`);
+      SELECT p.store_id, p.environment, json_extract(s.data, '$.createdAt') FROM primary_stores p JOIN stores s ON s.id = p.store_id;
+    INSERT OR IGNORE INTO seller_stores (store_id, environment, created_at)
+      SELECT g.store_id, 'google:' || g.environment || ':' || g.subject, json_extract(s.data, '$.createdAt') FROM google_accounts g JOIN stores s ON s.id = g.store_id;`);
   function get<T>(sql: string, ...args: string[]): T | undefined {
     const row = db.prepare(sql).get(...args) as { data: string } | undefined;
     return row ? (JSON.parse(row.data) as T) : undefined;
@@ -104,12 +114,17 @@ export function createRepo(
         now(),
       );
   }
-  // Every store belongs to the deployment's single seller; seller_stores lists them per Square environment.
+  // Every store belongs to one account scope in seller_stores.
   const createStore = db.transaction(
     (
       name: string,
       mode: Store["paymentMode"] = "production",
-      requestKey?: string,
+      provider: Store["paymentProvider"] = "platform",
+      options: {
+        scope?: string;
+        requestKey?: string;
+        business?: StoreBusiness;
+      } = {},
     ) => {
       const s: Store = {
         id: randomUUID(),
@@ -118,7 +133,10 @@ export function createRepo(
         createdAt: now(),
         revision: 0,
         paymentMode: mode,
-        locationId: process.env.SQUARE_LOCATION_ID,
+        locationId:
+          provider === "platform" ? process.env.SQUARE_LOCATION_ID : undefined,
+        paymentProvider: provider,
+        ...(options.business ? { business: options.business } : {}),
       };
       const token = randomBytes(32).toString("hex");
       db.prepare("INSERT INTO stores VALUES(?,?,?)").run(
@@ -128,8 +146,8 @@ export function createRepo(
       );
       db.prepare("INSERT INTO seller_stores VALUES(?,?,?,?)").run(
         s.id,
-        environmentOf(s),
-        requestKey ?? null,
+        options.scope ?? environmentOf(s),
+        options.requestKey ?? null,
         s.createdAt,
       );
       return { store: s, token };
@@ -171,7 +189,7 @@ export function createRepo(
       const value = snapshot(id);
       return {
         ...value,
-        store: { ...value.store, locationId: undefined },
+        store: { ...value.store, locationId: undefined, merchantId: undefined },
         stats: { revenue: 0, sold: 0, orders: 0 },
         activity: [],
       };
@@ -203,16 +221,27 @@ export function createRepo(
         };
       });
     },
+    scopeOf(id: string) {
+      return (
+        db
+          .prepare("SELECT environment FROM seller_stores WHERE store_id=?")
+          .get(id) as { environment: string } | undefined
+      )?.environment;
+    },
     addStore: db.transaction(
       (
         environment: string,
         name: string,
         mode: Store["paymentMode"],
         requestKey: string,
+        provider: Store["paymentProvider"] = "platform",
+        business?: StoreBusiness,
       ) => {
         const existing = db
-          .prepare("SELECT store_id FROM seller_stores WHERE request_key=?")
-          .get(requestKey) as { store_id: string } | undefined;
+          .prepare(
+            "SELECT store_id FROM seller_stores WHERE request_key=? AND environment=?",
+          )
+          .get(requestKey, environment) as { store_id: string } | undefined;
         if (existing) return store(existing.store_id)!;
         const { count } = db
           .prepare(
@@ -224,7 +253,17 @@ export function createRepo(
             409,
             `You can run up to ${MAX_STORES} storefronts. Delete or rename one you no longer use.`,
           );
-        return createStore(name, mode, requestKey).store;
+        if (
+          db
+            .prepare("SELECT 1 FROM seller_stores WHERE request_key=?")
+            .get(requestKey)
+        )
+          throw new AppError(409, "This request key was already used.");
+        return createStore(name, mode, provider, {
+          scope: environment,
+          requestKey,
+          business,
+        }).store;
       },
     ),
     // Stops new checkouts and publishing, then returns what Square must delete.
@@ -272,6 +311,7 @@ export function createRepo(
         "photos",
         "activity",
         "outbox",
+        "square_connections",
         "seller_stores",
       ])
         db.prepare(`DELETE FROM ${table} WHERE store_id=?`).run(id);
@@ -282,14 +322,22 @@ export function createRepo(
         .get(environment) as { store_id: string } | undefined;
       const next =
         remaining?.store_id ??
-        createStore(fallbackName, s.paymentMode).store.id;
-      const primary = db
-        .prepare("SELECT store_id FROM primary_stores WHERE environment=?")
-        .get(environment) as { store_id: string } | undefined;
-      if (!primary || primary.store_id === id)
+        createStore(fallbackName, s.paymentMode, s.paymentProvider, {
+          scope: environment,
+        }).store.id;
+      if (environment.startsWith("google:"))
         db.prepare(
-          "INSERT INTO primary_stores VALUES(?,?) ON CONFLICT(environment) DO UPDATE SET store_id=excluded.store_id",
-        ).run(environment, next);
+          "UPDATE google_accounts SET store_id=? WHERE store_id=?",
+        ).run(next, id);
+      else {
+        const primary = db
+          .prepare("SELECT store_id FROM primary_stores WHERE environment=?")
+          .get(environment) as { store_id: string } | undefined;
+        if (!primary || primary.store_id === id)
+          db.prepare(
+            "INSERT INTO primary_stores VALUES(?,?) ON CONFLICT(environment) DO UPDATE SET store_id=excluded.store_id",
+          ).run(environment, next);
+      }
       db.prepare("UPDATE sessions SET store_id=? WHERE store_id=?").run(
         next,
         id,
@@ -307,7 +355,9 @@ export function createRepo(
           .prepare("SELECT store_id FROM primary_stores WHERE environment=?")
           .get(environment) as { store_id: string } | undefined;
         if (existing) return store(existing.store_id)!;
-        const created = createStore(name, mode).store;
+        const created = createStore(name, mode, "platform", {
+          scope: environment,
+        }).store;
         db.prepare("INSERT INTO primary_stores VALUES(?,?)").run(
           environment,
           created.id,
@@ -315,34 +365,94 @@ export function createRepo(
         return created;
       })();
     },
-    // store_id records the storefront opened at sign-in (kept for rollback compatibility).
-    // A session authorizes every seller storefront; see authorize().
-    createSession(id: string) {
+    googleStore(subject: string, name: string, mode: Store["paymentMode"]) {
+      return db.transaction(() => {
+        const existing = db
+          .prepare(
+            "SELECT store_id FROM google_accounts WHERE subject=? AND environment=?",
+          )
+          .get(subject, mode) as { store_id: string } | undefined;
+        if (existing) return store(existing.store_id)!;
+        const created = createStore(name, mode, "square_oauth", {
+          scope: googleScope(subject, mode),
+        }).store;
+        db.prepare("INSERT INTO google_accounts VALUES(?,?,?)").run(
+          subject,
+          mode,
+          created.id,
+        );
+        return created;
+      })();
+    },
+    updateStore(
+      id: string,
+      patch: {
+        locationId?: string;
+        merchantId?: string;
+        business?: StoreBusiness;
+      },
+    ) {
+      return db.transaction(() => {
+        const current = store(id);
+        if (!current) throw new AppError(404, "Store not found.");
+        db.prepare("UPDATE stores SET data=? WHERE id=?").run(
+          JSON.stringify({ ...current, ...patch }),
+          id,
+        );
+        touch(id);
+        return store(id)!;
+      })();
+    },
+    // store_id is the account's primary storefront: the one opened at sign-in.
+    createSession(id: string, kind: "password" | "google" = "password") {
       const token = randomBytes(32).toString("hex");
       db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(Date.now());
       db.prepare("INSERT INTO sessions VALUES(?,?,?,?)").run(
         hash(token),
         id,
-        credentialVersion(),
+        kind === "google" ? "google" : credentialVersion(),
         Date.now() + 30 * 86400_000,
       );
       return token;
     },
-    session(token: string) {
+    // The signed-in account: its primary storefront, scope, and sign-in method.
+    account(token: string) {
       const row = db
         .prepare(
-          "SELECT 1 FROM sessions WHERE token_hash=? AND credential_version=? AND expires_at>?",
+          "SELECT store_id,credential_version FROM sessions WHERE token_hash=? AND (credential_version=? OR (credential_version='google' AND store_id IN (SELECT store_id FROM google_accounts))) AND expires_at>?",
         )
-        .get(hash(token), credentialVersion(), Date.now());
+        .get(hash(token), credentialVersion(), Date.now()) as
+        { store_id: string; credential_version: string } | undefined;
       if (!row)
         throw new AppError(401, "Please sign in to your seller account.");
+      return {
+        store: store(row.store_id)!,
+        google: row.credential_version === "google",
+        scope: this.scopeOf(row.store_id),
+      };
+    },
+    session(token: string) {
+      return this.account(token).store;
     },
     revokeSession(token: string) {
       db.prepare("DELETE FROM sessions WHERE token_hash=?").run(hash(token));
     },
+    // A Google seller manages the storefronts in their own scope. The password seller
+    // manages the storefronts in password scopes (those with a primary store).
     authorize(id: string, token: string) {
-      this.session(token);
-      if (!db.prepare("SELECT 1 FROM seller_stores WHERE store_id=?").get(id))
+      const account = this.account(token);
+      const scope = this.scopeOf(id);
+      const allowed =
+        account.store.id === id ||
+        (scope !== undefined &&
+          (account.google
+            ? scope === account.scope
+            : Boolean(
+                db
+                  .prepare("SELECT 1 FROM primary_stores WHERE environment=?")
+                  .get(scope),
+              )));
+      if (!allowed)
         throw new AppError(403, "This store belongs to another seller.");
     },
     limit: db.transaction((key: string, maximum: number, windowMs = 60_000) => {
@@ -538,7 +648,10 @@ export function createRepo(
           (sum, l) => sum + Math.round(l.price * 100) * l.quantity,
           0,
         );
-        const taxPercent = process.env.SALES_TAX_PERCENT || "0";
+        const taxPercent =
+          snap.store.paymentProvider === "square_oauth"
+            ? snap.store.business?.taxPercent || "0"
+            : process.env.SALES_TAX_PERCENT || "0";
         const taxCents = Math.round((subtotalCents * Number(taxPercent)) / 100);
         const order: Order = {
           id: randomUUID(),

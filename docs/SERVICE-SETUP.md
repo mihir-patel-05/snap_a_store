@@ -2,7 +2,7 @@
 
 The app uses real APIs. There is no sample-store button or simulated checkout. Complete the required services first; add the optional services to enable their features. Keep private keys in the root `.env.local` or your server's secret manager. Only public URLs belong in `mobile/.env.local` or Expo's environment variables.
 
-This guide configures **one Square merchant/location, USD, local pickup**, operated by a seller who can sign in from multiple devices. It does not onboard unrelated merchants. Use separate credentials and databases if you validate with Square sandbox before launching; the deployed app defaults to production.
+For public signup and multiple sellers, start with **[Google sign-in and seller Square connections](GOOGLE-SIGNIN.md)**. Each seller authorizes their own Square account and saves their own business settings. The personal access token and password instructions below retain the existing legacy seller account; they are optional in a Google-only deployment. USD and local pickup remain the supported checkout scope. Use separate credentials and databases for Square sandbox; production remains the default.
 
 ## 1. Anthropic: photo recognition (required)
 
@@ -21,7 +21,7 @@ Uploaded photos are resized and stripped of original metadata before recognition
 ## 2. Square: catalog and payments (required)
 
 1. Create/activate your Square seller account for payments. Open the [Developer Dashboard](https://developer.squareup.com/apps), create an application, and select its **Production** credentials.
-2. Copy the production access token. This single-merchant deployment uses the account's personal access token on the server; never embed it in the mobile app.
+2. Copy the production access token. The legacy password store uses this account's personal access token on the server; never embed it in the mobile app.
 3. Find your active US/USD location in the application's Locations page. Set:
 
 ```dotenv
@@ -30,7 +30,7 @@ SQUARE_ACCESS_TOKEN=your_production_access_token
 SQUARE_LOCATION_ID=your_active_location_id
 ```
 
-4. For a restricted OAuth token, permissions must cover catalog read/write (`ITEMS_READ`, `ITEMS_WRITE`), merchant/location read (`MERCHANT_PROFILE_READ`), order read/write (`ORDERS_READ`, `ORDERS_WRITE`), and payment read/write (`PAYMENTS_READ`, `PAYMENTS_WRITE`). The app does not implement an OAuth onboarding flow; a token must belong to the one intended merchant.
+4. For a restricted OAuth token, permissions must cover catalog read/write (`ITEMS_READ`, `ITEMS_WRITE`), merchant/location read (`MERCHANT_PROFILE_READ`), order read/write (`ORDERS_READ`, `ORDERS_WRITE`), and payment read/write (`PAYMENTS_READ`, `PAYMENTS_WRITE`). The [seller OAuth flow](GOOGLE-SIGNIN.md) requests these permissions automatically. A legacy personal token must belong to the intended legacy merchant.
 5. After your HTTPS backend is online, add a **Production webhook subscription** to the same application. Notification URL:
 
 ```text
@@ -52,7 +52,7 @@ An API-created link is for one checkout. The reusable storefront QR creates a fr
 
 For prelaunch testing, Square's actual sandbox API is supported with `SQUARE_ENVIRONMENT=sandbox` and its own credentials, subscription, and `DATABASE_PATH=data/snap-sandbox.sqlite`. It is isolated from production and clearly labeled. There is no application-generated fake payment success. Switch back to production and sign in again before launching; never reuse sandbox catalog IDs.
 
-## 3. Business settings and seller login (required)
+## 3. Legacy business settings and password login (optional with Google)
 
 Fill these with your actual business information:
 
@@ -65,7 +65,7 @@ SALES_TAX_PERCENT=your_applicable_percentage
 DATABASE_PATH=data/snap-live.sqlite
 ```
 
-`BUSINESS_NAME` also names your first storefront. After signing in you can open more storefronts (up to 20) from the storefront switcher in the app or `/studio`. Every storefront uses these business settings and the same Square location.
+`BUSINESS_NAME` also names the password seller's first storefront. After signing in, any seller can open more storefronts (up to 20) from the storefront switcher in the app or `/studio`. The password seller's storefronts all use these business settings and the same Square location. A Google seller's new storefront copies their saved business details and connects Square separately.
 
 `SALES_TAX_PERCENT` is a number from 0 to 30, up to four decimal places. For example, `8.625` means 8.625%. Set `0` only when appropriate for your sales. The application does not determine tax obligations or automatically choose rates by jurisdiction. It applies this configured rate to all items; businesses with exemptions or multiple tax jurisdictions need more tax logic before using this deployment for those sales.
 
@@ -79,7 +79,7 @@ npm run setup:seller
 
 The terminal prompts for email and a hidden password of at least 14 characters. It writes `SELLER_EMAIL`, a scrypt `SELLER_PASSWORD_HASH`, and a generated `MAINTENANCE_SECRET` into `.env.local` without printing the password. This is the login for both the mobile app and `/studio`.
 
-There is no email provider or public signup. To recover/change access, run this command on the trusted server checkout, deploy the new hash, and restart. Changing credentials revokes all previous seller sessions. Do not send private keys or passwords in chat.
+Public signup uses Google; password recovery for the legacy account is administrator-managed. To recover/change its access, run this command on the trusted server checkout, deploy the new hash, and restart. Changing credentials revokes all previous seller sessions. Do not send private keys or passwords in chat.
 
 ## 4. Public HTTPS backend (required for real checkout)
 

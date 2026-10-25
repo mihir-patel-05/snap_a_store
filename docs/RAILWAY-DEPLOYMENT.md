@@ -2,6 +2,8 @@
 
 This guide deploys **both the backend and the web frontend** from this repository. One Railway web service runs Next.js and serves the customer storefront, seller web interface, API, and Square webhooks. A second, small service runs payment maintenance.
 
+To add public Google signup to your existing deployment, follow **[Google sign-in and seller Square connections](GOOGLE-SIGNIN.md)**. Add its five private backend variables and register both OAuth callbacks. Existing deployments keep their current volume and data. The password/personal-token instructions below are for the legacy seller account.
+
 The Expo iOS/Android app in `mobile/` connects to the Railway API. Its installable native builds are created separately with Expo EAS; Railway does not produce an IPA or APK.
 
 ## What you will deploy
@@ -14,7 +16,7 @@ The Expo iOS/Android app in `mobile/` connects to the Railway API. Its installab
 | Payment reconciliation worker | `snap-maintenance` | No public domain |
 | SQLite database, including listing photos | Volume attached to `snap-backend` | Mounted at `/app/data` |
 
-Use one backend replica. This application supports one Square merchant/location, USD prices, and local pickup. The Railway deployment starts with a new database; it does not automatically upload the database on your Mac.
+Use one backend replica. This application supports multiple Google sellers, each with their own Square merchant/location, USD prices, and local pickup. The Railway deployment starts with a new database; it does not automatically upload the database on your Mac.
 
 You need access to the GitHub repository, a Railway account, a Claude API key with API billing, and production Square credentials for your active payment-enabled location. Railway's [pricing page](https://railway.com/pricing) lists current plan and usage costs. The Hobby plan has a $5 monthly minimum including $5 of usage; additional usage costs extra.
 
@@ -31,7 +33,7 @@ git push origin main
 
 Commit any application changes you intend to deploy before pushing. The repository is `mihir-patel-05/snap_a_store`, and the deployment branch is `main`. Keep `.env.local`, mobile environment files, and local databases out of GitHub.
 
-If you have not created a seller login yet:
+If you want to retain or create a legacy password seller login:
 
 ```bash
 npm run setup:seller

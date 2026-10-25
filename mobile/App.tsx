@@ -20,11 +20,15 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
+import { File } from "expo-file-system";
+import { photoForm } from "./lib/photo-form";
 import * as Crypto from "expo-crypto";
 import * as Haptics from "expo-haptics";
 import * as Clipboard from "expo-clipboard";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import QRCode from "react-native-qrcode-svg";
+import { googleSignIn } from "./lib/oauth";
+import { PaymentSetup } from "./components/payment-setup";
 import { ConvexClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 import { useFonts } from "expo-font";
@@ -134,6 +138,7 @@ export default function App() {
   );
 }
 function SellerApp() {
+  const [methods, setMethods] = useState({ google: false, password: true });
   const [tab, setTab] = useState<Tab>("home"),
     [session, setSession] = useState<Session | null>(null),
     [snapshot, setSnapshot] = useState<StoreSnapshot | null>(null),
@@ -233,6 +238,11 @@ function SellerApp() {
   }
   useEffect(() => {
     let active = true;
+    void api<{ google: boolean; password: boolean }>("/auth/methods")
+      .then((m) => {
+        if (active) setMethods(m);
+      })
+      .catch(() => {});
     (async () => {
       try {
         const saved = await loadSession();
@@ -413,6 +423,16 @@ function SellerApp() {
       notify(`${gone.name} was deleted.`);
     });
   }
+  async function signInWithGoogle() {
+    await run("Signing in with Google", async () => {
+      const result = await googleSignIn();
+      if (!result) return;
+      const next = { token: result.token, store: result.store };
+      await activate(next);
+      setPassword("");
+      await refresh(next);
+    });
+  }
   async function signOut() {
     await run("Signing out", async () => {
       if (session) await api("/auth/logout", session.token, {});
@@ -461,20 +481,11 @@ function SellerApp() {
           { compress: 0.85, format: ImageManipulator.SaveFormat.JPEG },
         );
         const s = await ensureStore();
-        const form = new FormData();
-        if (Platform.OS === "web") {
-          form.append(
-            "photo",
-            await (await fetch(processed.uri)).blob(),
-            "table.jpg",
-          );
-        } else {
-          form.append("photo", {
-            uri: processed.uri,
-            name: "table.jpg",
-            type: "image/jpeg",
-          } as unknown as Blob);
-        }
+        const upload =
+          Platform.OS === "web"
+            ? await (await fetch(processed.uri)).blob()
+            : new File(processed.uri);
+        const form = photoForm(upload);
         const r = await api<{ items: DraftItem[]; message: string }>(
           `/scan?storeId=${s.store.id}`,
           s.token,
@@ -636,38 +647,67 @@ function SellerApp() {
               Welcome<Text style={s.italic}> back.</Text>
             </Text>
             <Text style={s.subtitle}>
-              Sign in to photograph, price, and sell your finds.
+              Sign in or create your own store to photograph, price, and sell
+              your finds.
             </Text>
-            <View style={s.settingCard}>
-              <Text style={s.fieldLabel}>EMAIL</Text>
-              <TextInput
-                style={[
-                  s.storeNameInput,
-                  { fontFamily: F.regular, fontSize: 16, minWidth: 0 },
-                ]}
-                value={email}
-                onChangeText={setEmail}
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="email-address"
-                autoComplete="email"
-                accessibilityLabel="Email"
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Continue with Google"
+              style={[
+                s.secondaryButton,
+                {
+                  backgroundColor: "#fff",
+                  borderColor: "#747775",
+                  flexDirection: "row",
+                  gap: 12,
+                  marginBottom: 20,
+                },
+              ]}
+              onPress={() => void signInWithGoogle()}
+              disabled={!!busy || !methods.google}
+            >
+              <Image
+                source={require("./assets/google.png")}
+                style={{ width: 20, height: 20 }}
               />
-              <Text style={s.fieldLabel}>PASSWORD</Text>
-              <TextInput
-                style={[
-                  s.storeNameInput,
-                  { fontFamily: F.regular, fontSize: 16, minWidth: 0 },
-                ]}
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-                autoCapitalize="none"
-                autoComplete="current-password"
-                accessibilityLabel="Password"
-                onSubmitEditing={() => void signIn()}
-              />
-            </View>
+              <Text style={s.buttonDark}>
+                {methods.google
+                  ? "Continue with Google"
+                  : "Google sign-in unavailable"}
+              </Text>
+            </Pressable>
+            {methods.password && (
+              <View style={s.settingCard}>
+                <Text style={s.fieldLabel}>EMAIL</Text>
+                <TextInput
+                  style={[
+                    s.storeNameInput,
+                    { fontFamily: F.regular, fontSize: 16, minWidth: 0 },
+                  ]}
+                  value={email}
+                  onChangeText={setEmail}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="email-address"
+                  autoComplete="email"
+                  accessibilityLabel="Email"
+                />
+                <Text style={s.fieldLabel}>PASSWORD</Text>
+                <TextInput
+                  style={[
+                    s.storeNameInput,
+                    { fontFamily: F.regular, fontSize: 16, minWidth: 0 },
+                  ]}
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoComplete="current-password"
+                  accessibilityLabel="Password"
+                  onSubmitEditing={() => void signIn()}
+                />
+              </View>
+            )}
             {!!error && (
               <Text
                 style={{ color: "#a43f25", marginBottom: 18 }}
@@ -676,15 +716,17 @@ function SellerApp() {
                 {error}
               </Text>
             )}
-            <Button
-              label={busy || "Sign in"}
-              icon={<ArrowRight size={19} color="white" />}
-              onPress={() => void signIn()}
-              disabled={!!busy || !email.trim() || !password}
-            />
+            {methods.password && (
+              <Button
+                label={busy || "Sign in"}
+                icon={<ArrowRight size={19} color="white" />}
+                onPress={() => void signIn()}
+                disabled={!!busy || !email.trim() || !password}
+              />
+            )}
             <Text style={[s.tiny, { textAlign: "center", marginTop: 20 }]}>
-              Use the seller account configured for your store. Contact your
-              store administrator if you need access.
+              Google creates your own store. Connect your Square account to
+              accept payments. Existing sellers can still use their password.
             </Text>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -751,6 +793,26 @@ function SellerApp() {
               </Pressable>
             </View>
           )}
+          {(snapshot?.store || session.store).paymentProvider ===
+            "square_oauth" &&
+            (!(snapshot?.store || session.store).locationId ||
+              !(snapshot?.store || session.store).business) &&
+            tab !== "connections" && (
+              <View style={[s.settingCard, { marginBottom: 20 }]}>
+                <Text style={s.smallBold}>Finish setting up your store</Text>
+                <Text style={s.privacyText}>
+                  Connect Square and add pickup details before publishing.
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  style={s.saveName}
+                  onPress={() => setTab("connections")}
+                >
+                  <Text style={s.smallBold}>Set up payments</Text>
+                  <ArrowRight size={18} color={C.green} />
+                </Pressable>
+              </View>
+            )}
           {drafts.length > 0 ? (
             <>
               <Pressable style={s.back} onPress={exitReview} disabled={!!busy}>
@@ -1179,6 +1241,17 @@ function SellerApp() {
               <Text style={s.subtitle}>
                 Useful technology. A more human way to sell.
               </Text>
+              {(snapshot?.store || session.store).paymentProvider ===
+                "square_oauth" && (
+                <PaymentSetup
+                  key={session.store.id}
+                  store={snapshot?.store || session.store}
+                  token={session.token}
+                  onChanged={() => {
+                    void refresh();
+                  }}
+                />
+              )}
               <View style={s.settingCard}>
                 <Text style={s.fieldLabel}>THIS STOREFRONT’S NAME</Text>
                 <TextInput
@@ -1225,6 +1298,12 @@ function SellerApp() {
                 <Zap size={20} color={C.orange} />
               </View>
               {integrations.map((integration, i) => {
+                if (
+                  integration.name === "Square" &&
+                  (snapshot?.store || session.store).paymentProvider ===
+                    "square_oauth"
+                )
+                  return null;
                 const Icon =
                   [Sparkles, ShoppingBag, TrendingUp, Headphones, Package][i] ||
                   Zap;

@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { createRepo } from "../lib/repo";
+import { createRepo, googleScope } from "../lib/repo";
 import { credentialVersion } from "../lib/server/auth";
 import { fixtureItems } from "./fixtures/items";
 let repo: ReturnType<typeof createRepo>;
@@ -117,17 +117,43 @@ describe("Inventory transactions", () => {
     expect(() => repo.authorize(store.id, "wrong")).toThrow("sign in");
     expect(() => repo.authorize("unknown", token)).toThrow();
   });
-  it("authorizes one seller session for every seller storefront only", () => {
-    const a = repo.createStore("A store"),
-      b = repo.createStore("B store");
-    const token = repo.createSession(a.store.id);
-    expect(() => repo.authorize(b.store.id, token)).not.toThrow();
+  it("authorizes a session for its own account's storefronts only", () => {
+    const main = repo.primaryStore("production:", "Main", "production");
+    const extra = repo.addStore(
+      "production:",
+      "Extra",
+      "production",
+      randomUUID(),
+    );
+    const token = repo.createSession(main.id);
+    expect(() => repo.authorize(extra.id, token)).not.toThrow();
+    const ann = repo.googleStore("subject-ann", "Ann's store", "production");
+    const annExtra = repo.addStore(
+      googleScope("subject-ann", "production"),
+      "Ann's second",
+      "production",
+      randomUUID(),
+      "square_oauth",
+    );
+    const ben = repo.googleStore("subject-ben", "Ben's store", "production");
+    const annToken = repo.createSession(ann.id, "google");
+    expect(() => repo.authorize(annExtra.id, annToken)).not.toThrow();
+    for (const other of [main.id, extra.id, ben.id])
+      expect(() => repo.authorize(other, annToken)).toThrow("another seller");
+    for (const google of [ann.id, annExtra.id, ben.id])
+      expect(() => repo.authorize(google, token)).toThrow("another seller");
+    expect(
+      repo.sellerStores(googleScope("subject-ann", "production")),
+    ).toMatchObject([
+      { id: ann.id, paymentProvider: "square_oauth" },
+      { id: annExtra.id, paymentProvider: "square_oauth" },
+    ]);
     const outside = randomUUID();
     repo.db
       .prepare("INSERT INTO stores VALUES(?,?,?)")
-      .run(outside, "unused", JSON.stringify({ ...a.store, id: outside }));
+      .run(outside, "unused", JSON.stringify({ ...main, id: outside }));
     expect(() => repo.authorize(outside, token)).toThrow("another seller");
-    expect(() => repo.authorize(b.store.id, "wrong")).toThrow("sign in");
+    expect(() => repo.authorize(extra.id, "wrong")).toThrow("sign in");
   });
   it("lists storefronts per Square environment in creation order", () => {
     const first = repo.primaryStore("production:", "Main", "production");

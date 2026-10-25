@@ -19,7 +19,7 @@ export function acceptPayment(order: Order, payment: SquarePayment) {
   if (payment.status !== "COMPLETED") return false;
   if (
     payment.order_id !== order.squareOrderId ||
-    payment.location_id !== process.env.SQUARE_LOCATION_ID ||
+    payment.location_id !== repo.store(order.storeId)?.locationId ||
     payment.amount_money?.currency !== "USD"
   )
     throw new AppError(400, "Payment does not match this checkout.");
@@ -42,13 +42,14 @@ export async function reconcileOrder(order: Order) {
     return;
   const remote = await square<{
     order: { state: string; tenders?: { payment_id?: string }[] };
-  }>(`/orders/${order.squareOrderId}`, undefined, "GET");
+  }>(`/orders/${order.squareOrderId}`, undefined, "GET", order.storeId);
   for (const tender of remote.order.tenders || []) {
     if (!tender.payment_id) continue;
     const { payment } = await square<{ payment: SquarePayment }>(
       `/payments/${tender.payment_id}`,
       undefined,
       "GET",
+      order.storeId,
     );
     if (acceptPayment(order, payment)) return;
   }
@@ -66,12 +67,16 @@ export async function cancelCheckout(order: Order) {
     ? order
     : repo.linkOrder(
         order.id,
-        await createPaymentLink(order, requirePayments()),
+        await createPaymentLink(
+          order,
+          requirePayments(repo.store(order.storeId)),
+        ),
       );
   await square(
     `/online-checkout/payment-links/${linked.linkId}`,
     undefined,
     "DELETE",
+    order.storeId,
   );
   await reconcileOrder(linked);
   const current = repo.order(order.id)!;

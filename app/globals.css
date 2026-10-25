@@ -2097,3 +2097,98 @@ footer > span {
   background: #f6e8d6;
   text-align: center;
 }
+
+.google-sign-in {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 48px;
+  border: 1px solid #747775;
+  border-radius: 8px;
+  background: #fff;
+  color: #1f1f1f;
+  font:
+    500 16px system-ui,
+    sans-serif;
+  text-decoration: none;
+  padding: 12px 20px;
+  cursor: pointer;
+  margin: 24px 0 12px;
+}
+.google-sign-in:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.google-sign-in:focus-visible {
+  outline: 3px solid #193d33;
+  outline-offset: 3px;
+}
+.auth-divider {
+  font-size: 13px;
+  color: #667365;
+  text-align: center;
+}
+.payment-setup {
+  border: 1px solid #d7dfd1;
+  background: #fffefa;
+  border-radius: 18px;
+  padding: 24px;
+  margin-bottom: 32px;
+}
+.payment-setup-heading {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  justify-content: space-between;
+}
+.payment-setup h2 {
+  margin: 8px 0;
+  font-size: 24px;
+}
+.payment-setup p {
+  line-height: 1.5;
+}
+.payment-settings-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+.payment-settings-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.payment-settings-form input,
+.payment-settings-form textarea,
+.payment-settings-form select {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  padding: 12px;
+  border: 1px solid #d7dfd1;
+  border-radius: 8px;
+  background: white;
+  color: #193d33;
+  font: inherit;
+}
+.payment-settings-form textarea {
+  min-height: 90px;
+  resize: vertical;
+}
+@media (max-width: 640px) {
+  .payment-setup {
+    padding: 18px;
+  }
+  .payment-setup-heading {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .payment-settings-form {
+    grid-template-columns: 1fr;
+  }
+}

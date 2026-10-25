@@ -70,6 +70,10 @@ export function Storefront({ id }: { id: string }) {
     },
     [],
   );
+  const storeBusiness =
+    data?.store.paymentProvider === "square_oauth"
+      ? data.store.business
+      : business;
   const items = data?.items || [],
     count = Object.values(cart).reduce((s, q) => s + q, 0),
     total = items.reduce((s, i) => s + (cart[i.id] || 0) * i.price, 0);
@@ -205,7 +209,7 @@ export function Storefront({ id }: { id: string }) {
           <p>{data.store.tagline} Discover something with a story.</p>
           <div className="store-details">
             <span>
-              <MapPin size={14} /> {business?.pickup || "Local pickup"}
+              <MapPin size={14} /> {storeBusiness?.pickup || "Local pickup"}
             </span>
             <span>
               <Leaf size={14} /> Pre-loved, ready for more
@@ -363,11 +367,13 @@ export function Storefront({ id }: { id: string }) {
         </p>
       </div>
       <div className="store-policies">
-        <p>{business?.returns}</p>
-        {business?.email && (
-          <a href={`mailto:${business.email}`}>Contact the seller</a>
+        <p>{storeBusiness?.returns}</p>
+        {storeBusiness?.email && (
+          <a href={`mailto:${storeBusiness.email}`}>Contact the seller</a>
         )}
-        <a href="/policies">Pickup, returns & privacy</a>
+        <a href={`/policies?storeId=${encodeURIComponent(id)}`}>
+          Pickup, returns & privacy
+        </a>
       </div>
       <footer>
         <Brand />

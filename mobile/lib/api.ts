@@ -1,4 +1,6 @@
 import { Platform } from "react-native";
+import { fetch as expoFetch } from "expo/fetch";
+import { requestJson } from "./request";
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type {
@@ -53,38 +55,17 @@ export async function api<T>(
   body?: unknown,
   method?: string,
 ): Promise<T> {
-  let response: Response;
-  try {
-    response = await fetch(`${API_URL}/api${path}`, {
+  const multipart = body instanceof FormData;
+  return requestJson<T>(
+    `${API_URL}/api${path}`,
+    {
       method: method || (body ? "POST" : "GET"),
       headers: {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(body && !(body instanceof FormData)
-          ? { "Content-Type": "application/json" }
-          : {}),
+        ...(body && !multipart ? { "Content-Type": "application/json" } : {}),
       },
-      ...(body
-        ? { body: body instanceof FormData ? body : JSON.stringify(body) }
-        : {}),
-      signal: AbortSignal.timeout(65000),
-    });
-  } catch {
-    throw new Error(
-      `Can't reach your store server. Check your connection and EXPO_PUBLIC_API_URL (${API_URL}).`,
-    );
-  }
-  let data;
-  try {
-    data = await response.json();
-  } catch {
-    throw new Error(
-      "The server returned an unexpected response. Please retry.",
-    );
-  }
-  if (!response.ok)
-    throw Object.assign(
-      new Error(data.error || "Something went wrong. Please try again."),
-      { status: response.status },
-    );
-  return data as T;
+      ...(body ? { body: multipart ? body : JSON.stringify(body) } : {}),
+    },
+    expoFetch,
+  );
 }

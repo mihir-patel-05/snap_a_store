@@ -15,6 +15,7 @@ import {
   ScanLine,
 } from "lucide-react";
 import { Brand, ItemArt } from "@/components/brand";
+import { PaymentSetup } from "@/components/payment-setup";
 import { newRequestKey } from "@/lib/request-key";
 import { api, useStore } from "@/lib/client";
 import {
@@ -22,11 +23,13 @@ import {
   type DraftItem,
   type Store,
   type StoreSummary,
+  type StoreSnapshot,
   type Comparison,
 } from "@/lib/contracts";
 type SellerStores = { store: Store; stores: StoreSummary[] };
 const activeStoreKey = "snap-active-store";
 export default function Studio() {
+  const [methods, setMethods] = useState({ google: false, password: true });
   const [store, setStore] = useState<Store | null>(null),
     [stores, setStores] = useState<StoreSummary[]>([]),
     [newStoreName, setNewStoreName] = useState<string | null>(null),
@@ -50,6 +53,15 @@ export default function Studio() {
     key = useRef(""),
     storeKey = useRef("");
   useEffect(() => {
+    void api<{ google: boolean; password: boolean }>("/auth/methods")
+      .then(setMethods)
+      .catch(() => {});
+    const returned = new URL(window.location.href);
+    if (returned.searchParams.has("auth_error"))
+      setError((returned.searchParams.get("auth_error") || "").slice(0, 300));
+    returned.searchParams.delete("auth_error");
+    returned.searchParams.delete("square");
+    window.history.replaceState(null, "", returned.toString());
     api<SellerStores>("/auth/session")
       .then(openSession)
       .catch(() => {})
@@ -246,45 +258,67 @@ export default function Studio() {
           <h1>
             Welcome <em>back.</em>
           </h1>
-          <p>Sign in to photograph, price, and sell your finds.</p>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void signIn();
-            }}
-            className="login-form"
-          >
-            <label>
-              Email
-              <input
-                required
-                type="email"
-                autoComplete="username"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-              />
-            </label>
-            <label>
-              Password
-              <input
-                required
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </label>
-            {error && (
-              <div className="error" role="alert">
-                {error}
-              </div>
-            )}
-            <button className="button primary wide" disabled={!!busy}>
-              {busy || "Sign in"}
-              <ArrowRight size={18} />
+          <p>
+            Sign in or create your own store to photograph, price, and sell your
+            finds.
+          </p>
+          {methods.google ? (
+            <a className="google-sign-in" href="/api/auth/google/start">
+              <img src="/google.png" alt="" width={20} height={20} /> Continue
+              with Google
+            </a>
+          ) : (
+            <button className="google-sign-in" disabled>
+              <img src="/google.png" alt="" width={20} height={20} /> Google
+              sign-in unavailable
             </button>
-          </form>
-          <small>Use the seller account configured for your store.</small>
+          )}
+          {error && (
+            <div className="error" role="alert">
+              {error}
+            </div>
+          )}
+          {methods.password && (
+            <>
+              <p className="auth-divider">or use your existing seller login</p>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void signIn();
+                }}
+                className="login-form"
+              >
+                <label>
+                  Email
+                  <input
+                    required
+                    type="email"
+                    autoComplete="username"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
+                </label>
+                <label>
+                  Password
+                  <input
+                    required
+                    type="password"
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </label>
+                <button className="button primary wide" disabled={!!busy}>
+                  {busy || "Sign in"}
+                  <ArrowRight size={18} />
+                </button>
+              </form>
+            </>
+          )}
+          <small>
+            Your Google account gets its own store. Connect your Square account
+            to accept payments.
+          </small>
         </section>
       </main>
     );
@@ -402,6 +436,23 @@ export default function Studio() {
               )}
             </div>
           </nav>
+          {store.paymentProvider === "square_oauth" && (
+            <PaymentSetup
+              key={store.id}
+              store={store}
+              onSaved={() => {
+                const id = store.id;
+                void api<StoreSnapshot>(`/stores/${id}`)
+                  .then((r) =>
+                    setStore((current) =>
+                      current?.id === id ? r.store : current,
+                    ),
+                  )
+                  .catch(() => {});
+                void loadStores();
+              }}
+            />
+          )}
           <div className="section-heading">
             <div>
               <span className="eyebrow">

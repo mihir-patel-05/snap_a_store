@@ -7,10 +7,10 @@ The user's current direction is **Expo for iOS and Android**, Claude vision, **S
 - Sponsor features: Apify price evidence, Cartesia narration, Convex realtime snapshots.
 - Never invent live API success, sold prices, environmental metrics, or prize eligibility.
 - The user requires real services only. Do not add sample catalogs, simulated payment endpoints, or fabricated recognition. Missing credentials must fail clearly. Square production is the default; sandbox is an explicit integration-test environment.
-- One merchant per deployment. Require the configured seller login before managing inventory or spending provider credits. Keys stay on the server. Native seller tokens use SecureStore. Never commit `.env.local`.
+- Public Google signup creates an isolated store per Google subject/environment. Each seller connects their own Square account through OAuth. Retain the legacy password store and its server-configured Square account. Require store ownership before managing inventory or spending provider credits. Never link identities by email. Provider tokens stay encrypted on the server; native seller sessions use SecureStore. Never commit `.env.local`.
 - Preserve seller authorization, upload limits, webhook validation, transactional reservations, stable idempotency keys, and exact payment totals.
 - SQLite is authoritative; use a single persistent backend instance. Convex is a realtime projection with a durable retry queue.
 - Use Node 22.13+. Run relevant tests, root typecheck/build, native typecheck/export after changes to their paths.
 - Do not push, deploy, or distribute signed binaries merely because this file mentions a workflow.
 
-See README.md, docs/SPONSOR-TRACKS.md, and docs/VALIDATION.md.
+See README.md, docs/GOOGLE-SIGNIN.md, docs/SPONSOR-TRACKS.md, and docs/VALIDATION.md.

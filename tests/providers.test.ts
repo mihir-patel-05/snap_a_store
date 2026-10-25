@@ -10,6 +10,7 @@ import { VisionOutput, prepareImage } from "../lib/providers/vision";
 import { CheckoutRequest, PublishRequest } from "../lib/contracts";
 import { fixtureItems } from "./fixtures/items";
 import { randomUUID } from "node:crypto";
+import { repo } from "../lib/repo";
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
@@ -117,9 +118,10 @@ describe("Untrusted provider inputs", () => {
       }),
     );
     vi.stubGlobal("fetch", fetch);
+    const { store } = repo.createStore("Provider test");
     const item = {
       ...fixtureItems[0],
-      storeId: "s",
+      storeId: store.id,
       remaining: 2,
       available: 2,
       status: "live" as const,
