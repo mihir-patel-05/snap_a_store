@@ -1,18 +1,21 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Item, Order } from "../contracts";
-import { AppError, requireConfig } from "../server/errors";
+import { AppError } from "../server/errors";
+import { repo } from "../repo";
+import { squareAccessToken } from "../server/square-accounts";
 import { paymentEnvironment } from "../server/config";
 export async function square<T>(
   path: string,
   body?: unknown,
   method = "POST",
+  storeId?: string,
 ): Promise<T> {
   const response = await fetch(
     `${paymentEnvironment() === "production" ? "https://connect.squareup.com" : "https://connect.squareupsandbox.com"}/v2${path}`,
     {
       method,
       headers: {
-        Authorization: `Bearer ${requireConfig("SQUARE_ACCESS_TOKEN")}`,
+        Authorization: `Bearer ${await squareAccessToken(storeId)}`,
         "Square-Version": "2026-09-16",
         "Content-Type": "application/json",
       },
@@ -33,37 +36,42 @@ export async function square<T>(
 export async function createCatalog(items: Item[], key: string) {
   const response = await square<{
     id_mappings: { client_object_id: string; object_id: string }[];
-  }>("/catalog/batch-upsert", {
-    idempotency_key: key,
-    batches: [
-      {
-        objects: items.map((i, n) => ({
-          type: "ITEM",
-          id: `#item-${n}`,
-          item_data: {
-            name: i.name,
-            description: i.description,
-            variations: [
-              {
-                type: "ITEM_VARIATION",
-                id: `#variation-${n}`,
-                item_variation_data: {
-                  item_id: `#item-${n}`,
-                  name: "Regular",
-                  pricing_type: "FIXED_PRICING",
-                  price_money: {
-                    amount: Math.round(i.price * 100),
-                    currency: "USD",
+  }>(
+    "/catalog/batch-upsert",
+    {
+      idempotency_key: key,
+      batches: [
+        {
+          objects: items.map((i, n) => ({
+            type: "ITEM",
+            id: `#item-${n}`,
+            item_data: {
+              name: i.name,
+              description: i.description,
+              variations: [
+                {
+                  type: "ITEM_VARIATION",
+                  id: `#variation-${n}`,
+                  item_variation_data: {
+                    item_id: `#item-${n}`,
+                    name: "Regular",
+                    pricing_type: "FIXED_PRICING",
+                    price_money: {
+                      amount: Math.round(i.price * 100),
+                      currency: "USD",
+                    },
+                    track_inventory: false,
                   },
-                  track_inventory: false,
                 },
-              },
-            ],
-          },
-        })),
-      },
-    ],
-  });
+              ],
+            },
+          })),
+        },
+      ],
+    },
+    "POST",
+    items[0]?.storeId,
+  );
   const mapping = new Map(
     response.id_mappings.map((m) => [m.client_object_id, m.object_id]),
   );
@@ -87,40 +95,48 @@ export async function createPaymentLink(order: Order, base: string) {
         total_tax_money: { amount: number };
       }[];
     };
-  }>("/online-checkout/payment-links", {
-    idempotency_key: order.id,
-    order: {
-      location_id: requireConfig("SQUARE_LOCATION_ID"),
-      reference_id: order.id,
-      pricing_options: { auto_apply_taxes: false, auto_apply_discounts: false },
-      ...(Number(order.taxPercent) > 0
-        ? {
-            taxes: [
-              {
-                uid: "sales-tax",
-                name: "Sales tax",
-                percentage: order.taxPercent,
-                scope: "ORDER",
-                type: "ADDITIVE",
-              },
-            ],
-          }
-        : {}),
-      line_items: order.lines.map((l) => ({
-        catalog_object_id: l.variationId,
-        quantity: String(l.quantity),
-        base_price_money: {
-          amount: Math.round(l.price * 100),
-          currency: "USD",
+  }>(
+    "/online-checkout/payment-links",
+    {
+      idempotency_key: order.id,
+      order: {
+        location_id: repo.store(order.storeId)?.locationId,
+        reference_id: order.id,
+        pricing_options: {
+          auto_apply_taxes: false,
+          auto_apply_discounts: false,
         },
-      })),
+        ...(Number(order.taxPercent) > 0
+          ? {
+              taxes: [
+                {
+                  uid: "sales-tax",
+                  name: "Sales tax",
+                  percentage: order.taxPercent,
+                  scope: "ORDER",
+                  type: "ADDITIVE",
+                },
+              ],
+            }
+          : {}),
+        line_items: order.lines.map((l) => ({
+          catalog_object_id: l.variationId,
+          quantity: String(l.quantity),
+          base_price_money: {
+            amount: Math.round(l.price * 100),
+            currency: "USD",
+          },
+        })),
+      },
+      checkout_options: {
+        redirect_url: `${base}/pay/${order.id}`,
+        ask_for_shipping_address: false,
+        allow_tipping: false,
+      },
     },
-    checkout_options: {
-      redirect_url: `${base}/pay/${order.id}`,
-      ask_for_shipping_address: false,
-      allow_tipping: false,
-    },
-  });
+    "POST",
+    order.storeId,
+  );
   if (!result.payment_link?.url || !result.payment_link.order_id)
     throw new AppError(
       502,

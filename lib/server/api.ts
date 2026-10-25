@@ -6,6 +6,7 @@ import {
   CheckoutRequest,
   PublishRequest,
   type Integration,
+  StoreBusiness,
 } from "../contracts";
 import {
   paymentEnvironment,
@@ -13,8 +14,24 @@ import {
   requirePayments,
   assertStoreEnvironment,
   business,
+  requireDeploymentConfig,
 } from "./config";
 import { verifyLogin } from "./auth";
+import {
+  authMethods,
+  startGoogle,
+  oauthCallback,
+  exchangeNative,
+  squareLaunch,
+  authorizeSquare,
+  sessionCookie,
+} from "./oauth";
+import {
+  paymentConnection,
+  selectLocation,
+  storeForMerchant,
+  squareAccessToken,
+} from "./square-accounts";
 import {
   acceptPayment,
   reconcileOrder,
@@ -131,9 +148,6 @@ async function body(req: Request) {
 function validBase(_req: Request) {
   return publicBase();
 }
-function sessionCookie(value: string, expired = false) {
-  return `snap_owner=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${expired ? 0 : 2592000}${publicBase().startsWith("https:") ? "; Secure" : ""}`;
-}
 const audioCache = new Map<string, { data: ArrayBuffer; at: number }>();
 function allowedOrigins(req: Request) {
   return [
@@ -174,13 +188,34 @@ async function route(req: Request): Promise<Response> {
   if (method === "GET" && p[0] === "request-key")
     return json({ key: randomUUID() });
   if (method === "GET" && p[0] === "ready") {
-    requirePayments();
+    requireDeploymentConfig();
     requireConfig("ANTHROPIC_API_KEY");
-    requireConfig("SELLER_EMAIL");
-    requireConfig("SELLER_PASSWORD_HASH");
+    if (!authMethods().google) {
+      requireConfig("SELLER_EMAIL");
+      requireConfig("SELLER_PASSWORD_HASH");
+    }
     requireConfig("MAINTENANCE_SECRET");
     repo.db.prepare("SELECT 1").get();
     return json({ ready: true, environment: paymentEnvironment() });
+  }
+  if (p.join("/") === "auth/methods" && method === "GET")
+    return json(authMethods());
+  if (p.join("/") === "auth/google/start" && method === "GET")
+    return startGoogle(url);
+  if (p.join("/") === "auth/google/callback" && method === "GET")
+    return oauthCallback(req, "google");
+  if (p.join("/") === "auth/square/authorize" && method === "GET")
+    return authorizeSquare(url);
+  if (p.join("/") === "auth/square/callback" && method === "GET")
+    return oauthCallback(req, "square");
+  if (p.join("/") === "auth/google/exchange" && method === "POST") {
+    const data = z
+      .object({
+        code: z.string().min(1).max(200),
+        verifier: z.string().min(43).max(128),
+      })
+      .parse(await body(req));
+    return json(exchangeNative(data.code, data.verifier));
   }
   if (p[0] === "auth" && p[1] === "login" && method === "POST") {
     const data = z
@@ -232,6 +267,34 @@ async function route(req: Request): Promise<Response> {
     const currentStore = repo.store(id);
     if (!currentStore) throw new AppError(404, "Store not found.");
     assertStoreEnvironment(currentStore);
+    if (p[2] === "square") {
+      auth(req, id);
+      if (method === "POST" && p[3] === "connect" && p.length === 4) {
+        const data = z
+          .object({ client: z.enum(["web", "native"]).default("web") })
+          .parse(await body(req));
+        return json(squareLaunch(id, data.client));
+      }
+      if (method === "GET" && p.length === 3)
+        return json(await paymentConnection(currentStore));
+      if (method === "PATCH" && p.length === 3) {
+        const data = z
+          .object({
+            locationId: z.string().min(1).max(100).optional(),
+            business: StoreBusiness.optional(),
+          })
+          .parse(await body(req));
+        if (currentStore.paymentProvider !== "square_oauth")
+          throw new AppError(
+            403,
+            "This store's payments are managed by the administrator.",
+          );
+        if (data.locationId) await selectLocation(id, data.locationId);
+        if (data.business) repo.updateStore(id, { business: data.business });
+        await syncInventory();
+        return json(await paymentConnection(repo.store(id)!));
+      }
+    }
     if (method === "GET" && p.length === 2) {
       if (token(req)) {
         try {
@@ -353,7 +416,8 @@ async function route(req: Request): Promise<Response> {
   if (method === "POST" && p[0] === "publish") {
     const data = PublishRequest.parse(await body(req));
     auth(req, data.storeId);
-    requirePayments();
+    requirePayments(repo.store(data.storeId));
+    await squareAccessToken(data.storeId);
     let publish = repo.beginPublish(data.storeId, data.requestKey, data.items);
     if (publish.state !== "done") {
       publish = {
@@ -373,7 +437,8 @@ async function route(req: Request): Promise<Response> {
     const store = repo.store(data.storeId);
     if (!store) throw new AppError(404, "Store not found.");
     assertStoreEnvironment(store);
-    requirePayments();
+    requirePayments(store);
+    await squareAccessToken(store.id);
     const order = repo.reserve(data.storeId, data.requestKey, data.lines);
     if (order.state === "failed")
       throw new AppError(409, "Start a new checkout.");
@@ -431,8 +496,8 @@ async function route(req: Request): Promise<Response> {
         paymentUrl: order.state === "pending" ? order.paymentUrl : undefined,
         receiptUrl: order.receiptUrl,
         expiresAt: order.expiresAt,
-        pickup: business().pickup,
-        supportEmail: business().email,
+        pickup: business(repo.store(order.storeId)).pickup,
+        supportEmail: business(repo.store(order.storeId)).email,
       });
     }
     if (method === "POST" && p[2] === "cancel" && p.length === 3) {
@@ -469,7 +534,7 @@ async function route(req: Request): Promise<Response> {
       throw new AppError(400, "Missing payment.");
     if (payment.status !== "COMPLETED") return json({ ignored: true });
     if (
-      payment.location_id !== requireConfig("SQUARE_LOCATION_ID") ||
+      typeof payment.location_id !== "string" ||
       payment.amount_money?.currency !== "USD"
     )
       throw new AppError(400, "Payment location or currency mismatch.");
@@ -477,10 +542,20 @@ async function route(req: Request): Promise<Response> {
     if (!order) {
       // A webhook can arrive before the CreatePaymentLink response is persisted.
       // Ask Square to redeliver instead of acknowledging and losing the payment.
+      const merchantStore =
+        typeof event.merchant_id === "string"
+          ? storeForMerchant(event.merchant_id, payment.location_id)
+          : undefined;
+      if (
+        !merchantStore &&
+        payment.location_id !== process.env.SQUARE_LOCATION_ID
+      )
+        return json({ ignored: true });
       const remote = await square<{ order: { reference_id?: string } }>(
         `/orders/${payment.order_id}`,
         undefined,
         "GET",
+        merchantStore?.id,
       );
       if (remote.order.reference_id && repo.order(remote.order.reference_id))
         throw new AppError(
@@ -489,6 +564,12 @@ async function route(req: Request): Promise<Response> {
         );
       return json({ ignored: true });
     }
+    const payingStore = repo.store(order.storeId)!;
+    if (
+      payingStore.paymentProvider === "square_oauth" &&
+      event.merchant_id !== payingStore.merchantId
+    )
+      throw new AppError(400, "Payment merchant mismatch.");
     acceptPayment(order, payment);
     await syncInventory();
     return json({ received: true });

@@ -38,27 +38,51 @@ async function main() {
       },
     );
   });
-  await check(
-    "Square",
-    ["SQUARE_ACCESS_TOKEN", "SQUARE_LOCATION_ID"],
-    async () => {
-      const data = await get(
-        `${paymentEnvironment() === "production" ? "https://connect.squareup.com" : "https://connect.squareupsandbox.com"}/v2/locations/${process.env.SQUARE_LOCATION_ID}`,
-        {
-          Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
-          "Square-Version": "2026-09-16",
-        },
+  if (process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_SECRET) {
+    const keys = [
+      "GOOGLE_CLIENT_ID",
+      "GOOGLE_CLIENT_SECRET",
+      "SQUARE_APPLICATION_ID",
+      "SQUARE_APPLICATION_SECRET",
+      "OAUTH_ENCRYPTION_KEY",
+    ];
+    const missing = keys.filter((key) => !process.env[key]);
+    if (
+      missing.length ||
+      !/^[a-f0-9]{64}$/i.test(process.env.OAUTH_ENCRYPTION_KEY || "")
+    ) {
+      console.log(
+        `Google/Square OAuth: incomplete configuration (${missing.join(", ") || "OAUTH_ENCRYPTION_KEY must be 64 hex characters"})`,
       );
-      if (
-        data.location?.status !== "ACTIVE" ||
-        data.location?.currency !== "USD" ||
-        !data.location?.capabilities?.includes("CREDIT_CARD_PROCESSING")
-      )
-        throw new Error(
-          "Location must be active, use USD, and have card processing enabled.",
+      process.exitCode = 1;
+    } else {
+      console.log(
+        "Google/Square OAuth: variables present; validate redirects, Google sign-in, and seller authorization through the app. Account access has not been verified by this script.",
+      );
+    }
+  }
+  if (process.env.SQUARE_ACCESS_TOKEN || !process.env.GOOGLE_CLIENT_ID)
+    await check(
+      "Legacy Square",
+      ["SQUARE_ACCESS_TOKEN", "SQUARE_LOCATION_ID"],
+      async () => {
+        const data = await get(
+          `${paymentEnvironment() === "production" ? "https://connect.squareup.com" : "https://connect.squareupsandbox.com"}/v2/locations/${process.env.SQUARE_LOCATION_ID}`,
+          {
+            Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
+            "Square-Version": "2026-09-16",
+          },
         );
-    },
-  );
+        if (
+          data.location?.status !== "ACTIVE" ||
+          data.location?.currency !== "USD" ||
+          !data.location?.capabilities?.includes("CREDIT_CARD_PROCESSING")
+        )
+          throw new Error(
+            "Location must be active, use USD, and have card processing enabled.",
+          );
+      },
+    );
   await check("Apify", ["APIFY_TOKEN"], async () => {
     await get(
       `https://api.apify.com/v2/acts/${encodeURIComponent(process.env.APIFY_ACTOR_ID || "ninhothedev~ebay-scraper")}`,

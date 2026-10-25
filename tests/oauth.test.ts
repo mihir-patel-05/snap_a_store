@@ -1,0 +1,543 @@
+import {
+  beforeEach,
+  afterAll,
+  afterEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+import { createHash, createHmac, randomUUID } from "node:crypto";
+import { OAuth2Client, LoginTicket } from "google-auth-library";
+import { handle } from "../lib/server/api";
+import { repo } from "../lib/repo";
+import {
+  squareAccessToken,
+  connectSquare,
+  selectLocation,
+  encryptTokens,
+} from "../lib/server/square-accounts";
+import { square } from "../lib/providers/square";
+import { requirePayments } from "../lib/server/config";
+import { fixtureItems } from "./fixtures/items";
+const base = "https://snap.example";
+const settings = {
+  email: "owner@example.com",
+  pickup: "Collect at our table.",
+  returns: "Ask the seller.",
+  taxPercent: "0",
+};
+beforeEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+  for (const [k, v] of Object.entries({
+    PUBLIC_BASE_URL: base,
+    SQUARE_ENVIRONMENT: "production",
+    GOOGLE_CLIENT_ID: "google-client",
+    GOOGLE_CLIENT_SECRET: "google-secret",
+    SQUARE_APPLICATION_ID: "square-app",
+    SQUARE_APPLICATION_SECRET: "square-secret",
+    OAUTH_ENCRYPTION_KEY: "ab".repeat(32),
+    SQUARE_WEBHOOK_SIGNATURE_KEY: "webhook-key",
+    SQUARE_ACCESS_TOKEN: "legacy-token",
+    SQUARE_LOCATION_ID: "legacy-location",
+    SELLER_EMAIL: "owner@example.com",
+    SELLER_PASSWORD_HASH: "legacy-password-hash",
+  }))
+    vi.stubEnv(k, v);
+  repo.db.exec(
+    "DELETE FROM oauth_tickets; DELETE FROM google_accounts; DELETE FROM square_connections; DELETE FROM limits; DELETE FROM jobs; DELETE FROM sessions; DELETE FROM primary_stores; DELETE FROM outbox; DELETE FROM activity; DELETE FROM publishes; DELETE FROM photos; DELETE FROM orders; DELETE FROM items; DELETE FROM stores;",
+  );
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
+afterAll(() => repo.close());
+const get = (path: string, cookie?: string) =>
+  handle(
+    new Request(base + "/api" + path, { headers: cookie ? { cookie } : {} }),
+  );
+const post = (path: string, body: unknown, token?: string, method = "POST") =>
+  handle(
+    new Request(base + "/api" + path, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: "Bearer " + token } : {}),
+      },
+      body: JSON.stringify(body),
+    }),
+  );
+async function begin(query = "") {
+  const r = await get("/auth/google/start" + query);
+  expect(r.status).toBe(303);
+  const target = new URL(r.headers.get("location")!);
+  return {
+    state: target.searchParams.get("state")!,
+    nonce: target.searchParams.get("nonce")!,
+    cookie: r.headers.get("set-cookie")!.split(";")[0],
+    target,
+  };
+}
+function googleIdentity(
+  nonce: string,
+  subject = "google-user-1",
+  email = "owner@example.com",
+) {
+  vi.spyOn(OAuth2Client.prototype, "getToken").mockResolvedValue({
+    tokens: { id_token: "signed-google-token" },
+    res: null,
+  } as never);
+  vi.spyOn(OAuth2Client.prototype, "verifyIdToken").mockResolvedValue(
+    new LoginTicket("", {
+      iss: "https://accounts.google.com",
+      aud: "google-client",
+      sub: subject,
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 300,
+      email,
+      email_verified: true,
+      nonce,
+      given_name: "Alex",
+    }) as never,
+  );
+}
+async function webLogin(subject = "google-user-1") {
+  const flow = await begin();
+  googleIdentity(flow.nonce, subject);
+  const r = await get(
+    "/auth/google/callback?state=" + flow.state + "&code=code",
+    flow.cookie,
+  );
+  const token = r.headers
+    .getSetCookie()
+    .find((c) => c.startsWith("snap_owner="))!
+    .split(";")[0]
+    .slice(11);
+  return { token, store: repo.session(token), flow, response: r };
+}
+function tokenReply(merchant = "merchant-1", token = "seller-token") {
+  return {
+    access_token: token,
+    refresh_token: "refresh-" + merchant,
+    merchant_id: merchant,
+    expires_at: new Date(Date.now() + 86400000).toISOString(),
+  };
+}
+function squareMock(merchant = "merchant-1", location = "location-1") {
+  const fetch = vi.fn(async (url: string | URL | Request) => {
+    const s = String(url);
+    if (s.endsWith("/oauth2/token")) return Response.json(tokenReply(merchant));
+    if (s.endsWith("/v2/locations"))
+      return Response.json({
+        locations: [
+          {
+            id: location,
+            name: "My shop",
+            status: "ACTIVE",
+            currency: "USD",
+            capabilities: ["CREDIT_CARD_PROCESSING"],
+          },
+        ],
+      });
+    return Response.json({});
+  });
+  vi.stubGlobal("fetch", fetch);
+  return fetch;
+}
+describe("Google signup and isolated seller sessions", () => {
+  it("creates a separate store by Google subject and reuses it across logins without email linking", async () => {
+    const legacy = repo.primaryStore(
+      "production:legacy-location",
+      "Existing store",
+      "production",
+    );
+    const first = await webLogin();
+    expect(first.store.id).not.toBe(legacy.id);
+    expect(first.store.paymentProvider).toBe("square_oauth");
+    expect(first.store.locationId).toBeUndefined();
+    expect(first.response.headers.getSetCookie().join(";")).toContain(
+      "HttpOnly",
+    );
+    expect((await webLogin()).store.id).toBe(first.store.id);
+    const second = await webLogin("google-user-2");
+    expect(second.store.id).not.toBe(first.store.id);
+    expect(
+      (
+        await post(
+          "/stores/" + first.store.id + "/square/connect",
+          {},
+          second.token,
+        )
+      ).status,
+    ).toBe(403);
+    vi.stubEnv("SELLER_PASSWORD_HASH", "changed");
+    expect(repo.session(first.token).id).toBe(first.store.id);
+  });
+  it("rejects missing state cookies, reused callbacks, and expired flows", async () => {
+    const flow = await begin();
+    googleIdentity(flow.nonce);
+    const path = "/auth/google/callback?state=" + flow.state + "&code=code";
+    expect((await get(path)).status).toBe(400);
+    expect((await get(path, "snap_oauth=wrong")).status).toBe(400);
+    expect((await get(path, flow.cookie)).status).toBe(303);
+    expect((await get(path, flow.cookie)).status).toBe(400);
+    const expired = await begin();
+    repo.db.prepare("UPDATE oauth_tickets SET expires_at=0").run();
+    expect(
+      (
+        await get(
+          "/auth/google/callback?state=" + expired.state + "&code=code",
+          expired.cookie,
+        )
+      ).status,
+    ).toBe(400);
+  });
+  it("does not create a session when Google rejects the token, or when the nonce is wrong", async () => {
+    const flow = await begin();
+    googleIdentity("wrong-nonce");
+    const r = await get(
+      "/auth/google/callback?state=" + flow.state + "&code=code",
+      flow.cookie,
+    );
+    expect(
+      new URL(r.headers.get("location")!).searchParams.get("auth_error"),
+    ).toContain("verify");
+    expect(
+      repo.db.prepare("SELECT COUNT(*) AS count FROM sessions").get(),
+    ).toEqual({ count: 0 });
+    const second = await begin();
+    googleIdentity(second.nonce);
+    vi.spyOn(OAuth2Client.prototype, "verifyIdToken").mockRejectedValue(
+      new Error("invalid audience/signature"),
+    );
+    const failed = await get(
+      "/auth/google/callback?state=" + second.state + "&code=code",
+      second.cookie,
+    );
+    expect(failed.headers.get("location")).toContain("auth_error");
+    expect(
+      repo.db.prepare("SELECT COUNT(*) AS count FROM google_accounts").get(),
+    ).toEqual({ count: 0 });
+  });
+  it("binds one-time mobile grants to PKCE and returns no session token in the callback URL", async () => {
+    const verifier = "a".repeat(64),
+      challenge = createHash("sha256").update(verifier).digest("base64url");
+    const flow = await begin("?client=native&code_challenge=" + challenge);
+    googleIdentity(flow.nonce);
+    const callback = await get(
+      "/auth/google/callback?state=" + flow.state + "&code=code",
+      flow.cookie,
+    );
+    const destination = new URL(callback.headers.get("location")!);
+    expect(destination.protocol).toBe("snapastore:");
+    expect(destination.searchParams.has("token")).toBe(false);
+    const code = destination.searchParams.get("code");
+    expect(
+      (await post("/auth/google/exchange", { code, verifier: "b".repeat(64) }))
+        .status,
+    ).toBe(400);
+    const result = await post("/auth/google/exchange", { code, verifier });
+    expect(result.status).toBe(200);
+    const session = await result.json();
+    expect(repo.session(session.token).id).toBe(session.store.id);
+    expect(
+      (await post("/auth/google/exchange", { code, verifier })).status,
+    ).toBe(400);
+  });
+});
+describe("Per-seller Square onboarding and payment routing", () => {
+  it("requires authentication and never gives new sellers the deployment's Square token", async () => {
+    const { store, token } = await webLogin();
+    expect(() => requirePayments(store)).toThrow("Connect your Square");
+    await expect(squareAccessToken(store.id)).rejects.toThrow(
+      "Connect your Square",
+    );
+    expect(
+      (await post("/stores/" + store.id + "/square/connect", {})).status,
+    ).toBe(401);
+    const launch = await (
+      await post(
+        "/stores/" + store.id + "/square/connect",
+        { client: "web" },
+        token,
+      )
+    ).json();
+    const authorized = await handle(new Request(launch.url));
+    expect(authorized.status).toBe(303);
+    const target = new URL(authorized.headers.get("location")!);
+    expect(target.hostname).toBe("connect.squareup.com");
+    expect((await handle(new Request(launch.url))).status).toBe(400);
+    const mocked = squareMock();
+    const callback = await get(
+      "/auth/square/callback?state=" +
+        target.searchParams.get("state") +
+        "&code=sq-code",
+      authorized.headers.get("set-cookie")!.split(";")[0],
+    );
+    expect(callback.headers.get("location")).toContain("square=connected");
+    expect(repo.store(store.id)?.locationId).toBe("location-1");
+    const stored = repo.db
+      .prepare("SELECT encrypted FROM square_connections WHERE store_id=?")
+      .get(store.id) as { encrypted: string };
+    expect(stored.encrypted).not.toContain("seller-token");
+    await square("/orders/test", undefined, "GET", store.id);
+    expect(
+      (mocked.mock.calls.at(-1) as unknown as [string, RequestInit])[1].headers,
+    ).toMatchObject({ Authorization: "Bearer seller-token" });
+  });
+  it("keeps settings private to their owner and binds encrypted tokens to the correct store", async () => {
+    const a = await webLogin("A"),
+      b = await webLogin("B");
+    squareMock();
+    await connectSquare(a.store.id, "code", base + "/api/auth/square/callback");
+    const r = await post(
+      "/stores/" + a.store.id + "/square",
+      { business: settings },
+      a.token,
+      "PATCH",
+    );
+    expect(r.status).toBe(200);
+    expect(
+      (
+        await post(
+          "/stores/" + a.store.id + "/square",
+          { business: settings },
+          b.token,
+          "PATCH",
+        )
+      ).status,
+    ).toBe(403);
+    expect(repo.store(b.store.id)?.business).toBeUndefined();
+    const cipher = (
+      repo.db
+        .prepare("SELECT encrypted FROM square_connections WHERE store_id=?")
+        .get(a.store.id) as { encrypted: string }
+    ).encrypted;
+    repo.db
+      .prepare("INSERT INTO square_connections VALUES(?,?,?)")
+      .run(b.store.id, "merchant-1", cipher);
+    await expect(squareAccessToken(b.store.id)).rejects.toThrow(
+      "cannot be read",
+    );
+  });
+  it("refreshes expired seller tokens and prevents merchant or location changes after publishing", async () => {
+    const { store } = await webLogin();
+    squareMock();
+    await connectSquare(store.id, "code", base + "/api/auth/square/callback");
+    const expired = {
+      ...tokenReply(),
+      expires_at: new Date(Date.now() - 1000).toISOString(),
+    };
+    repo.db
+      .prepare("UPDATE square_connections SET encrypted=? WHERE store_id=?")
+      .run(encryptTokens(store.id, expired), store.id);
+    expect(await squareAccessToken(store.id)).toBe("seller-token");
+    const key = randomUUID(),
+      batch = repo.beginPublish(store.id, key, fixtureItems);
+    repo.finishPublish(store.id, key, batch.items);
+    squareMock("other-merchant", "location-2");
+    await expect(
+      connectSquare(store.id, "code", base + "/api/auth/square/callback"),
+    ).rejects.toThrow("same Square merchant");
+    await expect(selectLocation(store.id, "location-2")).rejects.toThrow(
+      "cannot change",
+    );
+    expect(repo.store(store.id)?.merchantId).toBe("merchant-1");
+  });
+  it("publishes and checks out two sellers using only their own tokens, locations, and tax settings", async () => {
+    vi.stubEnv("SQUARE_ACCESS_TOKEN", "");
+    vi.stubEnv("SQUARE_LOCATION_ID", "");
+    const remoteOrders = new Map<
+      string,
+      { location_id: string; total: number; token: string }
+    >();
+    const catalogTokens: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(String(input));
+        const data = init?.body ? JSON.parse(String(init.body)) : {};
+        const bearer = new Headers(init?.headers).get("Authorization") || "";
+        const seller = bearer.replace("Bearer token-", "");
+        if (url.pathname === "/oauth2/token")
+          return Response.json(
+            tokenReply("merchant-" + data.code, "token-" + data.code),
+          );
+        if (url.pathname === "/v2/locations")
+          return Response.json({
+            locations: [
+              {
+                id: "location-" + seller,
+                status: "ACTIVE",
+                currency: "USD",
+                capabilities: ["CREDIT_CARD_PROCESSING"],
+              },
+            ],
+          });
+        if (url.pathname === "/v2/catalog/batch-upsert") {
+          catalogTokens.push(bearer);
+          return Response.json({
+            id_mappings: data.batches[0].objects.flatMap(
+              (
+                item: {
+                  id: string;
+                  item_data: { variations: { id: string }[] };
+                },
+                i: number,
+              ) => [
+                {
+                  client_object_id: item.id,
+                  object_id: seller + "-catalog-" + i,
+                },
+                {
+                  client_object_id: item.item_data.variations[0].id,
+                  object_id: seller + "-variation-" + i,
+                },
+              ],
+            ),
+          });
+        }
+        if (url.pathname === "/v2/online-checkout/payment-links") {
+          expect(data.order.location_id).toBe("location-" + seller);
+          expect(data.order.line_items[0].catalog_object_id).toBe(
+            seller + "-variation-0",
+          );
+          const subtotal = data.order.line_items[0].base_price_money.amount;
+          const tax = Math.round(
+            (subtotal * Number(data.order.taxes?.[0].percentage || 0)) / 100,
+          );
+          const remoteId = "order-" + data.order.reference_id;
+          remoteOrders.set(remoteId, {
+            location_id: data.order.location_id,
+            total: subtotal + tax,
+            token: bearer,
+          });
+          return Response.json({
+            payment_link: {
+              id: "link-" + remoteId,
+              order_id: remoteId,
+              url: "https://square.link/" + remoteId,
+            },
+            related_resources: {
+              orders: [
+                {
+                  total_money: { amount: subtotal + tax, currency: "USD" },
+                  total_tax_money: { amount: tax, currency: "USD" },
+                },
+              ],
+            },
+          });
+        }
+        const remoteId = url.pathname.split("/").at(-1)!;
+        const remote = remoteOrders.get(remoteId);
+        if (remote && url.pathname.startsWith("/v2/orders/")) {
+          expect(bearer).toBe(remote.token);
+          return Response.json({
+            order: { state: "COMPLETED", tenders: [{ payment_id: remoteId }] },
+          });
+        }
+        if (remote && url.pathname.startsWith("/v2/payments/")) {
+          expect(bearer).toBe(remote.token);
+          return Response.json({
+            payment: {
+              id: "payment-" + remoteId,
+              order_id: remoteId,
+              location_id: remote.location_id,
+              status: "COMPLETED",
+              amount_money: { amount: remote.total, currency: "USD" },
+            },
+          });
+        }
+        throw new Error("Unexpected Square call: " + url.pathname);
+      }),
+    );
+    for (const seller of ["A", "B"]) {
+      const { store, token } = await webLogin(seller);
+      await connectSquare(store.id, seller, base + "/api/auth/square/callback");
+      const taxPercent = seller === "A" ? "5" : "10";
+      repo.updateStore(store.id, { business: { ...settings, taxPercent } });
+      const published = await post(
+        "/publish",
+        {
+          storeId: store.id,
+          requestKey: randomUUID(),
+          items: [fixtureItems[0]],
+        },
+        token,
+      );
+      expect(published.status).toBe(200);
+      const snapshot = await published.json();
+      const checkout = await post("/checkout", {
+        storeId: store.id,
+        requestKey: randomUUID(),
+        lines: [{ itemId: snapshot.items[0].id, quantity: 1 }],
+      });
+      expect(checkout.status).toBe(200);
+      const { orderId } = await checkout.json();
+      expect(repo.order(orderId)?.taxPercent).toBe(taxPercent);
+      expect((await get("/orders/" + orderId)).status).toBe(200);
+      expect(repo.order(orderId)?.state).toBe("paid");
+      const publicStore = (await (await get("/stores/" + store.id)).json())
+        .store;
+      expect(publicStore.merchantId).toBeUndefined();
+      expect(publicStore.locationId).toBeUndefined();
+    }
+    expect(catalogTokens).toEqual(["Bearer token-A", "Bearer token-B"]);
+  });
+
+  it("checks the webhook merchant and location against the order's seller", async () => {
+    const { store } = await webLogin();
+    squareMock();
+    await connectSquare(store.id, "code", base + "/api/auth/square/callback");
+    repo.updateStore(store.id, { business: settings });
+    const key = randomUUID(),
+      batch = repo.beginPublish(store.id, key, [fixtureItems[0]]);
+    repo.finishPublish(store.id, key, batch.items);
+    const order = repo.reserve(store.id, randomUUID(), [
+      { itemId: batch.items[0].id, quantity: 1 },
+    ]);
+    repo.linkOrder(order.id, {
+      squareOrderId: "square-order",
+      paymentUrl: "https://square.link/test",
+    });
+    const event = (merchant: string) =>
+      JSON.stringify({
+        type: "payment.updated",
+        merchant_id: merchant,
+        data: {
+          object: {
+            payment: {
+              id: "payment-1",
+              order_id: "square-order",
+              location_id: "location-1",
+              status: "COMPLETED",
+              amount_money: { amount: order.totalCents, currency: "USD" },
+            },
+          },
+        },
+      });
+    async function send(merchant: string) {
+      const raw = event(merchant);
+      return handle(
+        new Request(base + "/api/webhooks/square", {
+          method: "POST",
+          body: raw,
+          headers: {
+            "x-square-hmacsha256-signature": createHmac("sha256", "webhook-key")
+              .update(base + "/api/webhooks/square" + raw)
+              .digest("base64"),
+          },
+        }),
+      );
+    }
+    expect((await send("wrong-merchant")).status).toBe(400);
+    expect(repo.order(order.id)?.state).toBe("pending");
+    expect((await send("merchant-1")).status).toBe(200);
+    expect((await send("merchant-1")).status).toBe(200);
+    expect(repo.order(order.id)?.state).toBe("paid");
+  });
+});

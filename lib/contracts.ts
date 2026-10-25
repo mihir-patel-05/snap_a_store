@@ -44,6 +44,26 @@ export type Store = {
   revision: number;
   paymentMode: "production" | "sandbox";
   locationId?: string;
+  paymentProvider?: "platform" | "square_oauth";
+  merchantId?: string;
+  business?: StoreBusiness;
+};
+export const StoreBusiness = z.object({
+  email: z.string().email().max(254),
+  pickup: z.string().trim().min(3).max(1000),
+  returns: z.string().trim().min(3).max(1000),
+  taxPercent: z
+    .string()
+    .regex(/^\d{1,2}(\.\d{1,4})?$/)
+    .refine((v) => Number(v) <= 30),
+});
+export type StoreBusiness = z.infer<typeof StoreBusiness>;
+export type PaymentConnection = {
+  connected: boolean;
+  available: boolean;
+  locationId?: string;
+  locations: { id: string; name: string }[];
+  business?: StoreBusiness;
 };
 export type StoreSnapshot = {
   store: Store;

@@ -7,7 +7,14 @@ import {
   randomUUID,
   timingSafeEqual,
 } from "node:crypto";
-import type { DraftItem, Item, Order, Store, StoreSnapshot } from "./contracts";
+import type {
+  DraftItem,
+  Item,
+  Order,
+  Store,
+  StoreSnapshot,
+  StoreBusiness,
+} from "./contracts";
 import { AppError } from "./server/errors";
 import { credentialVersion } from "./server/auth";
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -31,6 +38,9 @@ export function createRepo(
     CREATE TABLE IF NOT EXISTS photos (id TEXT PRIMARY KEY, store_id TEXT NOT NULL, bytes BLOB NOT NULL);
     CREATE TABLE IF NOT EXISTS activity (id TEXT PRIMARY KEY, store_id TEXT NOT NULL, message TEXT NOT NULL, at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS outbox (store_id TEXT PRIMARY KEY, revision INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS google_accounts (subject TEXT NOT NULL, environment TEXT NOT NULL, store_id TEXT NOT NULL REFERENCES stores(id), PRIMARY KEY(subject, environment));
+    CREATE TABLE IF NOT EXISTS oauth_tickets (hash TEXT PRIMARY KEY, data TEXT NOT NULL, expires_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS square_connections (store_id TEXT PRIMARY KEY REFERENCES stores(id), merchant_id TEXT NOT NULL, encrypted TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS items_store ON items(store_id);
     CREATE INDEX IF NOT EXISTS orders_store ON orders(store_id);`);
   function get<T>(sql: string, ...args: string[]): T | undefined {
@@ -119,7 +129,7 @@ export function createRepo(
       const value = snapshot(id);
       return {
         ...value,
-        store: { ...value.store, locationId: undefined },
+        store: { ...value.store, locationId: undefined, merchantId: undefined },
         stats: { revenue: 0, sold: 0, orders: 0 },
         activity: [],
       };
@@ -135,7 +145,11 @@ export function createRepo(
           .all() as { data: string }[]
       ).map((r) => JSON.parse(r.data) as Order);
     },
-    createStore(name: string, mode: Store["paymentMode"] = "production") {
+    createStore(
+      name: string,
+      mode: Store["paymentMode"] = "production",
+      provider: Store["paymentProvider"] = "platform",
+    ) {
       const s: Store = {
         id: randomUUID(),
         name,
@@ -143,7 +157,9 @@ export function createRepo(
         createdAt: now(),
         revision: 0,
         paymentMode: mode,
-        locationId: process.env.SQUARE_LOCATION_ID,
+        locationId:
+          provider === "platform" ? process.env.SQUARE_LOCATION_ID : undefined,
+        paymentProvider: provider,
       };
       const token = randomBytes(32).toString("hex");
       db.prepare("INSERT INTO stores VALUES(?,?,?)").run(
@@ -171,13 +187,49 @@ export function createRepo(
         return created;
       })();
     },
-    createSession(id: string) {
+    googleStore(subject: string, name: string, mode: Store["paymentMode"]) {
+      return db.transaction(() => {
+        const existing = db
+          .prepare(
+            "SELECT store_id FROM google_accounts WHERE subject=? AND environment=?",
+          )
+          .get(subject, mode) as { store_id: string } | undefined;
+        if (existing) return store(existing.store_id)!;
+        const created = this.createStore(name, mode, "square_oauth").store;
+        db.prepare("INSERT INTO google_accounts VALUES(?,?,?)").run(
+          subject,
+          mode,
+          created.id,
+        );
+        return created;
+      })();
+    },
+    updateStore(
+      id: string,
+      patch: {
+        locationId?: string;
+        merchantId?: string;
+        business?: StoreBusiness;
+      },
+    ) {
+      return db.transaction(() => {
+        const current = store(id);
+        if (!current) throw new AppError(404, "Store not found.");
+        db.prepare("UPDATE stores SET data=? WHERE id=?").run(
+          JSON.stringify({ ...current, ...patch }),
+          id,
+        );
+        touch(id);
+        return store(id)!;
+      })();
+    },
+    createSession(id: string, kind: "password" | "google" = "password") {
       const token = randomBytes(32).toString("hex");
       db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(Date.now());
       db.prepare("INSERT INTO sessions VALUES(?,?,?,?)").run(
         hash(token),
         id,
-        credentialVersion(),
+        kind === "google" ? "google" : credentialVersion(),
         Date.now() + 30 * 86400_000,
       );
       return token;
@@ -185,7 +237,7 @@ export function createRepo(
     session(token: string) {
       const row = db
         .prepare(
-          "SELECT store_id FROM sessions WHERE token_hash=? AND credential_version=? AND expires_at>?",
+          "SELECT store_id FROM sessions WHERE token_hash=? AND (credential_version=? OR (credential_version='google' AND store_id IN (SELECT store_id FROM google_accounts))) AND expires_at>?",
         )
         .get(hash(token), credentialVersion(), Date.now()) as
         { store_id: string } | undefined;
@@ -384,7 +436,10 @@ export function createRepo(
           (sum, l) => sum + Math.round(l.price * 100) * l.quantity,
           0,
         );
-        const taxPercent = process.env.SALES_TAX_PERCENT || "0";
+        const taxPercent =
+          snap.store.paymentProvider === "square_oauth"
+            ? snap.store.business?.taxPercent || "0"
+            : process.env.SALES_TAX_PERCENT || "0";
         const taxCents = Math.round((subtotalCents * Number(taxPercent)) / 100);
         const order: Order = {
           id: randomUUID(),
