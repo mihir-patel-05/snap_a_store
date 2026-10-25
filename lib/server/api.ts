@@ -85,9 +85,9 @@ export function integrations(): Integration[] {
     },
     {
       name: "Apify",
-      feature: "Real market comparisons",
+      feature: "Market-checked scan prices",
       status: has("APIFY_TOKEN") ? "ready" : "setup",
-      detail: "Active eBay listings with source links",
+      detail: "Claude prices identifiable items against active eBay listings",
     },
     {
       name: "Cartesia",
@@ -481,6 +481,7 @@ async function route(req: Request): Promise<Response> {
       },
     });
   }
+  // Scans now research prices themselves; kept for app builds that still call it.
   if (method === "POST" && p[0] === "compare") {
     const data = z
       .object({ storeId: z.string(), name: z.string().trim().min(2).max(100) })

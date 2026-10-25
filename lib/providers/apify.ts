@@ -1,17 +1,16 @@
-import { z } from "zod";
-import type { Comparison } from "../contracts";
+import { Comparison } from "../contracts";
 import { AppError, requireConfig } from "../server/errors";
-const row = z.object({
-  title: z.string(),
-  price: z.number().positive().max(100000),
-  currency: z.literal("USD"),
-  url: z.string().url(),
-});
 export function normalizeComparisons(input: unknown): Comparison[] {
   if (!Array.isArray(input)) return [];
   return input
     .flatMap((i) => {
-      const parsed = row.safeParse(i);
+      const parsed = Comparison.safeParse(
+        i &&
+          typeof i === "object" &&
+          typeof (i as Comparison).title === "string"
+          ? { ...i, title: (i as Comparison).title.slice(0, 200) }
+          : i,
+      );
       if (!parsed.success) return [];
       const url = new URL(parsed.data.url);
       return url.protocol === "https:" &&
@@ -20,6 +19,16 @@ export function normalizeComparisons(input: unknown): Comparison[] {
         : [];
     })
     .slice(0, 8);
+}
+export function medianPrice(comparisons: Comparison[]) {
+  const prices = comparisons.map((c) => c.price).sort((a, b) => a - b);
+  const middle = Math.floor(prices.length / 2);
+  if (!prices.length) return null;
+  const median =
+    prices.length % 2
+      ? prices[middle]
+      : (prices[middle - 1] + prices[middle]) / 2;
+  return Math.round(median * 100) / 100;
 }
 export async function comparePrices(name: string) {
   const actor = process.env.APIFY_ACTOR_ID || "ninhothedev~ebay-scraper";
@@ -48,16 +57,9 @@ export async function comparePrices(name: string) {
       "Price research is temporarily unavailable. You can still set your own price.",
     );
   const comparisons = normalizeComparisons(await response.json());
-  const prices = comparisons.map((c) => c.price).sort((a, b) => a - b);
-  const middle = Math.floor(prices.length / 2);
-  const median = prices.length
-    ? prices.length % 2
-      ? prices[middle]
-      : (prices[middle - 1] + prices[middle]) / 2
-    : null;
   return {
     comparisons,
-    median,
+    median: medianPrice(comparisons),
     source: "Apify · active eBay asking prices",
     note: "These are asking prices, not confirmed sales. Compare condition and exact model before changing your price.",
   };

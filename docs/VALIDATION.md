@@ -2,6 +2,14 @@
 
 Checked October 24, 2026, using Node 22.22.2. This is evidence of the checks below, not certification of an unconfigured deployment.
 
+## Market-checked scan prices (October 25, 2026, Node 22.22.0)
+
+- Scans now research prices automatically. Claude writes an eBay search query for each identifiable item. Apify searches for up to 6 of them per scan, highest estimated value first. A second Claude turn, continuing the same conversation with the photo, decides which listings match and re-prices those items. The manual Compare market prices button is gone from both clients; `/compare` stays for older app builds.
+- 82 automated tests. New coverage: only identifiable items are searched; the follow-up turn replays Claude's first answer unchanged and labels listing titles as untrusted; only listings Claude matched are kept, with a median computed from them; a failed Apify run or follow-up keeps Claude's estimate and shows no market check; a search with no listings is reported without a second Claude call; no Apify credentials means no lookups; long listing titles are trimmed to the contract limit.
+- Root typecheck and production build. Native typecheck and Expo export for iOS, Android, and web.
+- Headless Chromium against the production build with a scratch database, a throwaway seller login, and a placeholder Square location ID. Injected drafts with matched and unmatched market evidence: the web studio shows the market check and source links under Why this price? at 1280 px and 390 px, with no horizontal overflow and no JS exceptions.
+- Not run for this revision: a live Claude + Apify scan (no credentials in this environment), the Expo app's new market-check rows on a device or in the web export, and scan latency on a real connection. The mobile scan timeout is now 180 s to allow for the lookups and second Claude pass.
+
 ## Merge with Google sign-in and seller Square accounts (October 25, 2026, Node 22.22.0)
 
 - Storefronts are now owned per account: each Google seller (by subject and environment) or the password seller (per Square environment and location). Before this merge, any valid session could manage every storefront; with public Google signup that would have crossed sellers.

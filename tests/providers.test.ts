@@ -55,8 +55,15 @@ describe("Untrusted provider inputs", () => {
       },
       { title: "Bad", price: 5, currency: "USD", url: "javascript:alert(1)" },
       { title: "Bad", price: 5, currency: "USD", url: "https://evil.example/" },
+      {
+        title: "Long".repeat(100),
+        price: 5,
+        currency: "USD",
+        url: "https://ebay.com/itm/3",
+      },
     ]);
-    expect(rows).toHaveLength(1);
+    expect(rows).toHaveLength(2);
+    expect(rows[1].title).toHaveLength(200);
   });
   it("rejects malformed vision output instead of inventing a listing", () => {
     expect(
