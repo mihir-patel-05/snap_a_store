@@ -1,5 +1,4 @@
 import {
-  ScanLine,
   Coffee,
   LampDesk,
   BookOpen,
@@ -7,11 +6,37 @@ import {
   ShoppingBag,
   Shirt,
 } from "lucide-react";
+/** The Snap-a-Store mark: a shop awning over a camera lens. Matches public/icon.svg. */
+export function BrandMark({ size = 22 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="20 22 60 60"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path
+        d="M26 27h48l8 14a8 8 0 0 1-16 0a8 8 0 0 1-16 0a8 8 0 0 1-16 0a8 8 0 0 1-16 0z"
+        fill="#d9ef9b"
+      />
+      <circle
+        cx="50"
+        cy="66"
+        r="11.5"
+        fill="none"
+        stroke="#d9ef9b"
+        strokeWidth="6"
+      />
+      <circle cx="50" cy="66" r="4.5" fill="#de805d" />
+    </svg>
+  );
+}
 export function Brand({ light = false }: { light?: boolean }) {
   return (
     <a className={`brand ${light ? "light" : ""}`} href="/">
       <span className="brand-icon">
-        <ScanLine size={22} />
+        <BrandMark />
       </span>
       snap<span className="brand-dot">a</span>store
       <span className="brand-period">.</span>

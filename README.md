@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="public/logo-dark.svg">
+  <img src="public/logo.svg" alt="Snap-a-Store" width="284" height="56">
+</picture>
+
 # Snap-a-Store
 
 An Expo seller app for iOS and Android, with a public storefront and Square checkout. Photograph your items, review Claude's proposed names and prices, publish your catalog, and share a storefront QR code. Inventory is reserved before checkout and sold only after a verified Square payment.

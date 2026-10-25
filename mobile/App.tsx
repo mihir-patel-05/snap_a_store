@@ -29,7 +29,7 @@ import * as Clipboard from "expo-clipboard";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import QRCode from "react-native-qrcode-svg";
 import { federatedSignIn } from "./lib/oauth";
-import Svg, { Path } from "react-native-svg";
+import Svg, { Circle, Path } from "react-native-svg";
 import { PaymentSetup } from "./components/payment-setup";
 import { ConvexClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
@@ -99,6 +99,19 @@ const CONDITIONS: DraftItem["condition"][] = [
   "Fair",
   "Check condition",
 ];
+/** The Snap-a-Store mark: a shop awning over a camera lens. Matches assets/icon.png. */
+function BrandMark({ size = 22 }: { size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="20 22 60 60">
+      <Path
+        d="M26 27h48l8 14a8 8 0 0 1-16 0a8 8 0 0 1-16 0a8 8 0 0 1-16 0a8 8 0 0 1-16 0z"
+        fill={C.lime}
+      />
+      <Circle cx="50" cy="66" r="11.5" fill="none" stroke={C.lime} strokeWidth="6" />
+      <Circle cx="50" cy="66" r="4.5" fill={C.orange} />
+    </Svg>
+  );
+}
 export default function App() {
   const [loaded, error] = useFonts({
     DMSans_400Regular,
@@ -781,7 +794,7 @@ function SellerApp() {
         <View style={s.topBar}>
           <View style={s.brand}>
             <View style={s.brandMark}>
-              <ScanLine size={22} color={C.paper} />
+              <BrandMark size={22} />
             </View>
             <Text style={s.brandText}>
               snap<Text style={s.brandA}>a</Text>store

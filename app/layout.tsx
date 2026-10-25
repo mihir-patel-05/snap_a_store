@@ -4,7 +4,7 @@ export const metadata: Metadata = {
   title: "Snap-a-Store · Good finds. New beginnings.",
   description:
     "Turn a table of secondhand finds into a storefront. Snap, review, publish, and share.",
-  icons: { icon: "/icon.svg" },
+  icons: { icon: "/icon.svg", apple: "/apple-touch-icon.png" },
 };
 export const viewport: Viewport = {
   width: "device-width",
