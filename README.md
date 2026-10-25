@@ -8,7 +8,7 @@ An Expo seller app for iOS and Android, with a public storefront and Square chec
 
 For Railway hosting, follow **[Deploy the backend and web frontend to Railway](docs/RAILWAY-DEPLOYMENT.md)**. The customer storefront and backend share one HTTPS address; the Expo native app connects to it.
 
-For public seller signup, follow **[Google sign-in and seller Square connections](docs/GOOGLE-SIGNIN.md)**. It covers the five new backend variables, both OAuth callback URLs, and rebuilding the native app. Every Google seller gets an isolated store and connects their own Square account.
+For public seller signup, follow **[Google sign-in and seller Square connections](docs/GOOGLE-SIGNIN.md)**. It covers the five new backend variables, both OAuth callback URLs, and rebuilding the native app. Every Google seller gets an isolated store and connects their own Square account. Sign in with Apple works the same way; see **[Sign in with Apple](docs/APPLE-SIGNIN.md)**.
 
 Follow **[Service setup and deployment](docs/SERVICE-SETUP.md)** for the shared Anthropic key, HTTPS backend, optional Apify/Cartesia/Convex services, and existing password store.
 

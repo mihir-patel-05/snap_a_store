@@ -7,7 +7,7 @@ import { api, API_URL, type Session } from "./api";
 function nativeBuild() {
   if (Constants.executionEnvironment === ExecutionEnvironment.StoreClient)
     throw new Error(
-      "Use an installed development or preview build for Google and Square sign-in. You can also sign in through the web dashboard.",
+      "Use an installed development or preview build for Google, Apple, and Square sign-in. You can also sign in through the web dashboard.",
     );
 }
 async function browser(url: string, callback: string) {
@@ -27,9 +27,13 @@ async function browser(url: string, callback: string) {
   if (error) throw new Error(error.slice(0, 300));
   return returned;
 }
-export async function googleSignIn(): Promise<Session | null> {
+// Both providers sign in through the backend and return a one-time grant.
+export async function federatedSignIn(
+  provider: "google" | "apple",
+): Promise<Session | null> {
+  const name = provider === "google" ? "Google" : "Apple";
   if (Platform.OS === "web") {
-    await Linking.openURL(API_URL + "/api/auth/google/start");
+    await Linking.openURL(API_URL + `/api/auth/${provider}/start`);
     return null;
   }
   const verifier = Array.from(Crypto.getRandomBytes(32), (b) =>
@@ -46,14 +50,14 @@ export async function googleSignIn(): Promise<Session | null> {
     .replace(/=+$/, "");
   const returned = await browser(
     API_URL +
-      "/api/auth/google/start?client=native&code_challenge=" +
+      `/api/auth/${provider}/start?client=native&code_challenge=` +
       challenge,
     "snapastore://auth",
   );
   if (!returned) return null;
   const code = returned.searchParams.get("code");
   if (!code)
-    throw new Error("Google sign-in did not finish. Please try again.");
+    throw new Error(`${name} sign-in did not finish. Please try again.`);
   return api<Session>("/auth/google/exchange", undefined, { code, verifier });
 }
 export async function connectSquareAccount(storeId: string, token: string) {

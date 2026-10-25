@@ -2146,6 +2146,13 @@ footer > span {
   outline: 3px solid #193d33;
   outline-offset: 3px;
 }
+/* Apple's guidelines: a black button with the white Apple logo. */
+.google-sign-in.apple-sign-in {
+  margin-top: 0;
+  border-color: #000;
+  background: #000;
+  color: #fff;
+}
 .auth-divider {
   font-size: 13px;
   color: #667365;
