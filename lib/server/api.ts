@@ -5,6 +5,8 @@ import { repo } from "../repo";
 import {
   CheckoutRequest,
   CreateStoreRequest,
+  SignUpRequest,
+  ProfileRequest,
   DeleteStoreRequest,
   PublishRequest,
   EditItemRequest,
@@ -19,7 +21,12 @@ import {
   business,
   requireDeploymentConfig,
 } from "./config";
-import { verifyLogin } from "./auth";
+import {
+  verifyLogin,
+  verifyPassword,
+  hashPassword,
+  isLegacySeller,
+} from "./auth";
 import {
   authMethods,
   startSignIn,
@@ -265,6 +272,37 @@ async function route(req: Request): Promise<Response> {
       .parse(await body(req));
     return json(exchangeNative(data.code, data.verifier));
   }
+  if (p.join("/") === "auth/profile" && method === "PATCH") {
+    const account = repo.account(token(req));
+    if (!account.google || !account.scope)
+      throw new AppError(403, "Only Google and Apple accounts set a name here.");
+    const data = ProfileRequest.parse(await body(req));
+    repo.saveProfile(account.scope, data.firstName, data.lastName);
+    return json(data);
+  }
+  if (p.join("/") === "auth/signup" && method === "POST") {
+    const data = SignUpRequest.parse(await body(req));
+    rateLimit("signup", 20);
+    if (isLegacySeller(data.email))
+      throw new AppError(
+        409,
+        "An account with this email already exists. Sign in instead.",
+      );
+    const store = repo.createEmailAccount(
+      {
+        email: data.email,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        birthDate: data.birthDate,
+        passwordHash: await hashPassword(data.password),
+      },
+      paymentEnvironment(),
+    );
+    const token = repo.createSession(store.id, "google");
+    const response = json({ store, token });
+    response.headers.set("Set-Cookie", sessionCookie(token));
+    return response;
+  }
   if (p[0] === "auth" && p[1] === "login" && method === "POST") {
     const data = z
       .object({
@@ -273,6 +311,22 @@ async function route(req: Request): Promise<Response> {
       })
       .parse(await body(req));
     repo.limit(`login:${data.email.toLowerCase()}`, 10, 15 * 60_000);
+    if (!isLegacySeller(data.email)) {
+      // Sign-up accounts: an unknown email and a wrong password fail alike.
+      const account = repo.emailAccount(data.email);
+      if (!(await verifyPassword(data.password, account?.passwordHash)))
+        throw new AppError(401, "Email or password is incorrect.");
+      const store = repo.googleStore(
+        "email:" + account!.id,
+        `${account!.firstName}'s store`.slice(0, 60),
+        paymentEnvironment(),
+      );
+      assertStoreEnvironment(store);
+      const token = repo.createSession(store.id, "google");
+      const response = json({ store, token });
+      response.headers.set("Set-Cookie", sessionCookie(token));
+      return response;
+    }
     await verifyLogin(data.email, data.password);
     const { store } = passwordScope();
     const ownerToken = repo.createSession(store.id);

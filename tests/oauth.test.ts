@@ -55,7 +55,7 @@ beforeEach(() => {
   }))
     vi.stubEnv(k, v);
   repo.db.exec(
-    "DELETE FROM oauth_tickets; DELETE FROM google_accounts; DELETE FROM square_connections; DELETE FROM limits; DELETE FROM jobs; DELETE FROM sessions; DELETE FROM primary_stores; DELETE FROM outbox; DELETE FROM activity; DELETE FROM publishes; DELETE FROM photos; DELETE FROM orders; DELETE FROM items; DELETE FROM seller_stores; DELETE FROM convex_removals; DELETE FROM stores;",
+    "DELETE FROM oauth_tickets; DELETE FROM account_profiles; DELETE FROM email_accounts; DELETE FROM google_accounts; DELETE FROM square_connections; DELETE FROM limits; DELETE FROM jobs; DELETE FROM sessions; DELETE FROM primary_stores; DELETE FROM outbox; DELETE FROM activity; DELETE FROM publishes; DELETE FROM photos; DELETE FROM orders; DELETE FROM items; DELETE FROM seller_stores; DELETE FROM convex_removals; DELETE FROM stores;",
   );
 });
 afterEach(() => {
@@ -164,13 +164,18 @@ describe("Google signup and isolated seller sessions", () => {
       "production",
     );
     const first = await webLogin();
+    expect(first.response.headers.get("location")).toBe(
+      base + "/studio?welcome=1",
+    );
     expect(first.store.id).not.toBe(legacy.id);
     expect(first.store.paymentProvider).toBe("square_oauth");
     expect(first.store.locationId).toBeUndefined();
     expect(first.response.headers.getSetCookie().join(";")).toContain(
       "HttpOnly",
     );
-    expect((await webLogin()).store.id).toBe(first.store.id);
+    const returning = await webLogin();
+    expect(returning.store.id).toBe(first.store.id);
+    expect(returning.response.headers.get("location")).toBe(base + "/studio");
     const second = await webLogin("google-user-2");
     expect(second.store.id).not.toBe(first.store.id);
     expect(
@@ -184,6 +189,35 @@ describe("Google signup and isolated seller sessions", () => {
     ).toBe(403);
     vi.stubEnv("SELLER_PASSWORD_HASH", "changed");
     expect(repo.session(first.token).id).toBe(first.store.id);
+  });
+  it("saves a Google or Apple seller's name to their own account", async () => {
+    const { token, store } = await webLogin();
+    const name = { firstName: " Alex ", lastName: "Rivera" };
+    expect((await post("/auth/profile", name, undefined, "PATCH")).status).toBe(
+      401,
+    );
+    expect(
+      (await post("/auth/profile", { ...name, lastName: " " }, token, "PATCH"))
+        .status,
+    ).toBe(400);
+    const saved = await post("/auth/profile", name, token, "PATCH");
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toEqual({ firstName: "Alex", lastName: "Rivera" });
+    expect(
+      repo.db.prepare("SELECT scope, first_name, last_name FROM account_profiles").all(),
+    ).toEqual([
+      { scope: repo.scopeOf(store.id), first_name: "Alex", last_name: "Rivera" },
+    ]);
+    // The legacy password seller has no Google or Apple account to name.
+    const legacy = repo.primaryStore(
+      "production:legacy-location",
+      "Existing store",
+      "production",
+    );
+    expect(
+      (await post("/auth/profile", name, repo.createSession(legacy.id), "PATCH"))
+        .status,
+    ).toBe(403);
   });
   it("rejects missing state cookies, reused callbacks, and expired flows", async () => {
     const flow = await begin();
@@ -252,9 +286,90 @@ describe("Google signup and isolated seller sessions", () => {
     expect(result.status).toBe(200);
     const session = await result.json();
     expect(repo.session(session.token).id).toBe(session.store.id);
+    expect(session.welcome).toEqual({ firstName: "Alex" });
     expect(
       (await post("/auth/google/exchange", { code, verifier })).status,
     ).toBe(400);
+  });
+});
+describe("Email sign-up", () => {
+  const adult = new Date().getFullYear() - 30 + "-04-15";
+  const ada = {
+    firstName: "Ada",
+    lastName: "Lovelace",
+    birthDate: adult,
+    email: "Ada@Example.com",
+    password: "correct horse",
+  };
+  it("creates an isolated store and signs the seller in", async () => {
+    const r = await post("/auth/signup", ada);
+    expect(r.status).toBe(200);
+    const { store, token } = await r.json();
+    expect(store).toMatchObject({
+      name: "Ada's store",
+      paymentProvider: "square_oauth",
+    });
+    expect(r.headers.get("set-cookie")).toContain("HttpOnly");
+    expect(repo.session(token).id).toBe(store.id);
+    const stored = repo.db
+      .prepare("SELECT email, password_hash FROM email_accounts")
+      .get() as { email: string; password_hash: string };
+    expect(stored.email).toBe("ada@example.com");
+    expect(stored.password_hash).toMatch(/^scrypt:/);
+    expect(stored.password_hash).not.toContain("correct horse");
+    // Another seller's account cannot manage this store.
+    const other = await (
+      await post("/auth/signup", { ...ada, email: "grace@example.com" })
+    ).json();
+    expect(other.store.id).not.toBe(store.id);
+    expect(
+      (await post("/stores/" + store.id, { name: "Mine" }, other.token, "PATCH"))
+        .status,
+    ).toBe(403);
+  });
+  it("signs in with the same email in any case, and rejects wrong passwords alike", async () => {
+    const { store } = await (await post("/auth/signup", ada)).json();
+    const ok = await post("/auth/login", {
+      email: "ADA@example.com",
+      password: "correct horse",
+    });
+    expect(ok.status).toBe(200);
+    expect((await ok.json()).store.id).toBe(store.id);
+    const wrong = await post("/auth/login", {
+      email: "ada@example.com",
+      password: "wrong horse",
+    });
+    const missing = await post("/auth/login", {
+      email: "nobody@example.com",
+      password: "correct horse",
+    });
+    expect([wrong.status, missing.status]).toEqual([401, 401]);
+    expect((await wrong.json()).error).toBe((await missing.json()).error);
+  });
+  it("rejects duplicate emails, the legacy seller's email, and invalid details", async () => {
+    expect((await post("/auth/signup", ada)).status).toBe(200);
+    expect(
+      (await post("/auth/signup", { ...ada, email: "ada@EXAMPLE.com" })).status,
+    ).toBe(409);
+    expect(
+      (await post("/auth/signup", { ...ada, email: "owner@example.com" }))
+        .status,
+    ).toBe(409);
+    const minor = new Date().getFullYear() - 17 + "-01-01";
+    for (const bad of [
+      { email: "not-an-email" },
+      { password: "short" },
+      { birthDate: minor },
+      { birthDate: "1990-02-30" },
+      { firstName: " " },
+    ])
+      expect(
+        (await post("/auth/signup", { ...ada, email: "x@example.com", ...bad }))
+          .status,
+      ).toBe(400);
+    expect(
+      repo.db.prepare("SELECT COUNT(*) AS count FROM email_accounts").get(),
+    ).toEqual({ count: 1 });
   });
 });
 describe("Sign in with Apple", () => {
@@ -354,7 +469,7 @@ describe("Sign in with Apple", () => {
   });
   it("signs the client secret with the .p8 key and creates one store per Apple subject", async () => {
     const { r, fetch, token } = await appleLogin("001234.apple-user");
-    expect(r.headers.get("location")).toBe(base + "/studio");
+    expect(r.headers.get("location")).toBe(base + "/studio?welcome=1");
     const store = repo.session(token!);
     expect(store.paymentProvider).toBe("square_oauth");
     const body = new URLSearchParams(
@@ -387,7 +502,9 @@ describe("Sign in with Apple", () => {
       sub: "com.snapastore.web",
       aud: "https://appleid.apple.com",
     });
-    expect(repo.session((await appleLogin("001234.apple-user")).token!).id).toBe(
+    const again = await appleLogin("001234.apple-user");
+    expect(again.r.headers.get("location")).toBe(base + "/studio");
+    expect(repo.session(again.token!).id).toBe(
       store.id,
     );
     const other = repo.session((await appleLogin("009999.other")).token!);
@@ -443,6 +560,8 @@ describe("Sign in with Apple", () => {
       verifier,
     });
     expect(result.status).toBe(200);
+    // Apple shares no name, so the welcome has none.
+    expect((await result.json()).welcome).toEqual({});
   });
   it("is unavailable until every Apple variable is set", async () => {
     vi.stubEnv("APPLE_KEY_ID", "");

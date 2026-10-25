@@ -29,7 +29,9 @@ import * as Clipboard from "expo-clipboard";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import QRCode from "react-native-qrcode-svg";
 import { federatedSignIn } from "./lib/oauth";
-import Svg, { Path } from "react-native-svg";
+import { SocialSignIn } from "./components/social-sign-in";
+import { SignUp, type SignUpDetails } from "./components/sign-up";
+import { Onboarding } from "./components/onboarding";
 import { PaymentSetup } from "./components/payment-setup";
 import { ConvexClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
@@ -160,7 +162,16 @@ function SellerApp() {
     [newStoreName, setNewStoreName] = useState(""),
     [deleteOpen, setDeleteOpen] = useState(false),
     [deleteName, setDeleteName] = useState(""),
-    [whyOpen, setWhyOpen] = useState<string[]>([]);
+    [whyOpen, setWhyOpen] = useState<string[]>([]),
+    [authMode, setAuthMode] = useState<"signin" | "signup">("signin"),
+    // A seller whose account was just created, being onboarded.
+    [onboarding, setOnboarding] = useState<{
+      firstName?: string;
+      lastName?: string;
+      askName?: boolean;
+    } | null>(
+      null,
+    );
   useEffect(() => {
     setEditingItem(null);
   }, [session?.store.id]);
@@ -364,6 +375,15 @@ function SellerApp() {
       await refresh(next);
     });
   }
+  async function signUp(details: SignUpDetails) {
+    await run("Creating your account", async () => {
+      const next = await api<Session>("/auth/signup", undefined, details);
+      setOnboarding({ firstName: details.firstName });
+      await activate({ token: next.token, store: next.store });
+      setAuthMode("signin");
+      await refresh(next);
+    });
+  }
   async function switchStore(next: Store) {
     setStoresOpen(false);
     if (!session || next.id === session.store.id) return;
@@ -428,6 +448,7 @@ function SellerApp() {
       const result = await federatedSignIn(provider);
       if (!result) return;
       const next = { token: result.token, store: result.store };
+      if (result.welcome) setOnboarding({ ...result.welcome, askName: true });
       await activate(next);
       setPassword("");
       await refresh(next);
@@ -628,6 +649,29 @@ function SellerApp() {
         <ActivityIndicator color={C.green} />
       </SafeAreaView>
     );
+  if (session && onboarding)
+    return (
+      <Onboarding
+        session={session}
+        firstName={onboarding.firstName}
+        lastName={onboarding.lastName}
+        askName={onboarding.askName}
+        onRenamed={(store) => {
+          const next = { token: session.token, store };
+          setSession(next);
+          setName(store.name);
+          setStores((list) =>
+            list.map((s) => (s.id === store.id ? { ...s, name: store.name } : s)),
+          );
+          void saveSession(next);
+        }}
+        onDone={() => {
+          setOnboarding(null);
+          setTab("home");
+          void refresh();
+        }}
+      />
+    );
   if (!session)
     return (
       <SafeAreaView style={s.safe}>
@@ -642,132 +686,98 @@ function SellerApp() {
               { flexGrow: 1, justifyContent: "center" },
             ]}
           >
-            <View style={[s.emptyIcon, { marginBottom: 24 }]}>
-              <StoreIcon size={40} color={C.green} />
-            </View>
-            <Eyebrow text="YOUR BUSINESS, WITH YOU" />
-            <Text style={s.title}>
-              Welcome<Text style={s.italic}> back.</Text>
-            </Text>
-            <Text style={s.subtitle}>
-              Sign in or create your own store to photograph, price, and sell
-              your finds.
-            </Text>
-            {methods.password && (
-              <View style={[s.settingCard, { marginBottom: 16 }]}>
-                <Text style={s.fieldLabel}>EMAIL</Text>
-                <TextInput
-                  style={[s.storeNameInput, s.fieldInput]}
-                  value={email}
-                  onChangeText={setEmail}
-                  placeholder="you@example.com"
-                  placeholderTextColor={C.quiet}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  keyboardType="email-address"
-                  autoComplete="email"
-                  accessibilityLabel="Email"
-                />
-                <Text style={s.fieldLabel}>PASSWORD</Text>
-                <TextInput
-                  style={[s.storeNameInput, s.fieldInput]}
-                  value={password}
-                  onChangeText={setPassword}
-                  placeholder="Your password"
-                  placeholderTextColor={C.quiet}
-                  secureTextEntry
-                  autoCapitalize="none"
-                  autoComplete="current-password"
-                  accessibilityLabel="Password"
-                  onSubmitEditing={() => void signIn()}
-                />
-              </View>
-            )}
-            {!!error && (
-              <Text
-                style={s.inlineError}
-                accessibilityRole="alert"
-              >
-                {error}
-              </Text>
-            )}
-            {methods.password && (
-              <Button
-                label={busy || "Sign in"}
-                icon={<ArrowRight size={19} color="white" />}
-                onPress={() => void signIn()}
-                disabled={!!busy || !email.trim() || !password}
-              />
-            )}
-            {methods.password && (
-              <Text
-                style={[
-                  s.tiny,
-                  { textAlign: "center", marginTop: 20, marginBottom: 12 },
-                ]}
-              >
-                or continue with
-              </Text>
-            )}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Continue with Google"
-              style={[
-                s.secondaryButton,
-                {
-                  backgroundColor: "#fff",
-                  borderColor: "#747775",
-                  flexDirection: "row",
-                  gap: 12,
-                  marginBottom: 20,
-                },
-              ]}
-              onPress={() => void signInWith("google")}
-              disabled={!!busy || !methods.google}
-            >
-              <Image
-                source={require("./assets/google.png")}
-                style={{ width: 20, height: 20 }}
-              />
-              <Text style={s.buttonDark}>
-                {methods.google
-                  ? "Continue with Google"
-                  : "Google sign-in unavailable"}
-              </Text>
-            </Pressable>
-            {methods.apple && (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Continue with Apple"
-                style={[
-                  s.secondaryButton,
-                  {
-                    backgroundColor: "#000",
-                    borderColor: "#000",
-                    flexDirection: "row",
-                    gap: 12,
-                    marginTop: -8,
-                    marginBottom: 20,
-                  },
-                ]}
-                onPress={() => void signInWith("apple")}
-                disabled={!!busy}
-              >
-                <Svg width={17} height={20} viewBox="0 0 384 512">
-                  <Path
-                    fill="#fff"
-                    d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"
+            {authMode === "signup" ? (
+              <SignUp
+                busy={busy}
+                error={error}
+                onSubmit={(details) => void signUp(details)}
+                onSignIn={() => {
+                  setError("");
+                  setAuthMode("signin");
+                }}
+                footer={
+                  <SocialSignIn
+                    label="or sign up with"
+                    google={methods.google}
+                    apple={methods.apple}
+                    disabled={!!busy}
+                    onPress={(p) => void signInWith(p)}
                   />
-                </Svg>
-                <Text style={[s.buttonDark, { color: "#fff" }]}>
-                  Continue with Apple
+                }
+              />
+            ) : (
+              <>
+                <View style={[s.emptyIcon, { marginBottom: 24 }]}>
+                  <StoreIcon size={40} color={C.green} />
+                </View>
+                <Eyebrow text="YOUR BUSINESS, WITH YOU" />
+                <Text style={s.title}>
+                  Welcome<Text style={s.italic}> back.</Text>
                 </Text>
-              </Pressable>
+                <Text style={s.subtitle}>
+                  Sign in to photograph, price, and sell your finds.
+                </Text>
+                <View style={[s.settingCard, { marginBottom: 16 }]}>
+                  <Text style={s.fieldLabel}>EMAIL</Text>
+                  <TextInput
+                    style={[s.storeNameInput, s.fieldInput]}
+                    value={email}
+                    onChangeText={setEmail}
+                    placeholder="you@example.com"
+                    placeholderTextColor={C.quiet}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="email-address"
+                    autoComplete="email"
+                    accessibilityLabel="Email"
+                  />
+                  <Text style={[s.fieldLabel, { marginTop: 18 }]}>PASSWORD</Text>
+                  <TextInput
+                    style={[s.storeNameInput, s.fieldInput]}
+                    value={password}
+                    onChangeText={setPassword}
+                    placeholder="Your password"
+                    placeholderTextColor={C.quiet}
+                    secureTextEntry
+                    autoCapitalize="none"
+                    autoComplete="current-password"
+                    accessibilityLabel="Password"
+                    onSubmitEditing={() => void signIn()}
+                  />
+                </View>
+                {!!error && (
+                  <Text style={s.inlineError} accessibilityRole="alert">
+                    {error}
+                  </Text>
+                )}
+                <Button
+                  label={busy || "Sign in"}
+                  icon={<ArrowRight size={19} color="white" />}
+                  onPress={() => void signIn()}
+                  disabled={!!busy || !email.trim() || !password}
+                />
+                <Text style={s.authSwitch}>
+                  New to snapastore?{" "}
+                  <Text
+                    style={s.authLink}
+                    accessibilityRole="link"
+                    suppressHighlighting
+                    onPress={() => {
+                      setError("");
+                      setAuthMode("signup");
+                    }}
+                  >
+                    Create an account
+                  </Text>
+                </Text>
+                <SocialSignIn
+                  google={methods.google}
+                  apple={methods.apple}
+                  disabled={!!busy}
+                  onPress={(p) => void signInWith(p)}
+                />
+              </>
             )}
-            <Text style={[s.tiny, { textAlign: "center", marginTop: 20 }]}>
-              Google or Apple creates your own store. Connect your Square account to
-              accept payments. Existing sellers can still use their password.
-            </Text>
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -2227,6 +2237,18 @@ const s = StyleSheet.create({
   },
   dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: C.leaf },
   tiny: { fontFamily: F.regular, ...T.footnote, color: C.muted },
+  authSwitch: {
+    fontFamily: F.regular,
+    ...T.subhead,
+    color: C.muted,
+    textAlign: "center",
+    marginTop: 20,
+  },
+  authLink: {
+    fontFamily: F.semi,
+    color: C.green,
+    textDecorationLine: "underline",
+  },
   statsRow: { flexDirection: "row", gap: 12 },
   stat: {
     flex: 1,

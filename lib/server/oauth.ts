@@ -21,6 +21,8 @@ type Ticket = {
   challenge?: string;
   storeId?: string;
   mode: string;
+  // Set on a native grant when sign-in created the account, to start onboarding.
+  welcome?: { firstName?: string; lastName?: string };
 };
 const random = () => randomBytes(32).toString("base64url");
 const hash = (s: string) => createHash("sha256").update(s).digest("base64url");
@@ -70,9 +72,8 @@ export function authMethods() {
       process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET,
     ),
     apple: appleConfigured(),
-    password: Boolean(
-      process.env.SELLER_EMAIL && process.env.SELLER_PASSWORD_HASH,
-    ),
+    // Email sign-up is always available; the legacy seller also signs in here.
+    password: true,
   };
 }
 function googleClient() {
@@ -204,14 +205,16 @@ async function googleStore(code: string, ticket: Ticket) {
     !equal(String(payload.nonce || ""), ticket.nonce || "")
   )
     throw new AppError(401, "Google could not verify this account.");
-  return repo.googleStore(
-    payload.sub,
-    (payload.given_name ? payload.given_name + "'s store" : "My store").slice(
-      0,
-      60,
+  const firstName = payload.given_name?.trim().slice(0, 50) || undefined;
+  return {
+    ...repo.federatedStore(
+      payload.sub,
+      (firstName ? firstName + "'s store" : "My store").slice(0, 60),
+      paymentEnvironment(),
     ),
-    paymentEnvironment(),
-  );
+    firstName,
+    lastName: payload.family_name?.trim().slice(0, 50) || undefined,
+  };
 }
 async function appleStore(code: string, ticket: Ticket) {
   const identity = await appleIdentity(code, appleRedirect());
@@ -219,11 +222,16 @@ async function appleStore(code: string, ticket: Ticket) {
     throw new AppError(401, "Apple could not verify this account.");
   // Apple subjects share the federated account table under their own prefix;
   // Google subjects are numeric, so the two can never collide.
-  return repo.googleStore(
-    "apple:" + identity.sub,
-    "My store",
-    paymentEnvironment(),
-  );
+  // No name is requested from Apple, so onboarding greets these sellers generically.
+  return {
+    ...repo.federatedStore(
+      "apple:" + identity.sub,
+      "My store",
+      paymentEnvironment(),
+    ),
+    firstName: undefined,
+    lastName: undefined,
+  };
 }
 export async function oauthCallback(
   req: Request,
@@ -257,7 +265,7 @@ export async function oauthCallback(
       destination.searchParams.set("square", "connected");
       return redirect(destination.toString());
     }
-    const store =
+    const { store, created, firstName, lastName } =
       provider === "apple"
         ? await appleStore(code, ticket)
         : await googleStore(code, ticket);
@@ -269,12 +277,15 @@ export async function oauthCallback(
           storeId: store.id,
           challenge: ticket.challenge,
           mode: paymentEnvironment(),
+          welcome: created ? { firstName, lastName } : undefined,
         },
         60_000,
       );
       destination.searchParams.set("code", grant);
       return redirect(destination.toString());
     }
+    // The name stays out of the URL; the web greeting is generic.
+    if (created) destination.searchParams.set("welcome", "1");
     const response = redirect(destination.toString());
     response.headers.append(
       "Set-Cookie",
@@ -298,5 +309,9 @@ export function exchangeNative(code: string, verifier: string) {
     Boolean(t.challenge && equal(hash(verifier), t.challenge)),
   );
   const store = repo.store(ticket.storeId!)!;
-  return { store, token: repo.createSession(store.id, "google") };
+  return {
+    store,
+    token: repo.createSession(store.id, "google"),
+    ...(ticket.welcome && { welcome: ticket.welcome }),
+  };
 }

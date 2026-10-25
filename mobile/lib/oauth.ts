@@ -30,7 +30,7 @@ async function browser(url: string, callback: string) {
 // Both providers sign in through the backend and return a one-time grant.
 export async function federatedSignIn(
   provider: "google" | "apple",
-): Promise<Session | null> {
+): Promise<(Session & { welcome?: { firstName?: string; lastName?: string } }) | null> {
   const name = provider === "google" ? "Google" : "Apple";
   if (Platform.OS === "web") {
     await Linking.openURL(API_URL + `/api/auth/${provider}/start`);
@@ -58,7 +58,11 @@ export async function federatedSignIn(
   const code = returned.searchParams.get("code");
   if (!code)
     throw new Error(`${name} sign-in did not finish. Please try again.`);
-  return api<Session>("/auth/google/exchange", undefined, { code, verifier });
+  return api<Session & { welcome?: { firstName?: string; lastName?: string } }>(
+    "/auth/google/exchange",
+    undefined,
+    { code, verifier },
+  );
 }
 export async function connectSquareAccount(storeId: string, token: string) {
   if (Platform.OS === "web") {

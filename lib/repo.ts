@@ -57,6 +57,8 @@ export function createRepo(
     CREATE TABLE IF NOT EXISTS activity (id TEXT PRIMARY KEY, store_id TEXT NOT NULL, message TEXT NOT NULL, at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS outbox (store_id TEXT PRIMARY KEY, revision INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS google_accounts (subject TEXT NOT NULL, environment TEXT NOT NULL, store_id TEXT NOT NULL REFERENCES stores(id), PRIMARY KEY(subject, environment));
+    CREATE TABLE IF NOT EXISTS account_profiles (scope TEXT PRIMARY KEY, first_name TEXT NOT NULL, last_name TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS email_accounts (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, first_name TEXT NOT NULL, last_name TEXT NOT NULL, birth_date TEXT NOT NULL, password_hash TEXT NOT NULL, created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS oauth_tickets (hash TEXT PRIMARY KEY, data TEXT NOT NULL, expires_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS square_connections (store_id TEXT PRIMARY KEY REFERENCES stores(id), merchant_id TEXT NOT NULL, encrypted TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS seller_stores (store_id TEXT PRIMARY KEY REFERENCES stores(id), environment TEXT NOT NULL, request_key TEXT UNIQUE, created_at TEXT NOT NULL);
@@ -398,13 +400,18 @@ export function createRepo(
       })();
     },
     googleStore(subject: string, name: string, mode: Store["paymentMode"]) {
+      return this.federatedStore(subject, name, mode).store;
+    },
+    // Opens the account's store, creating it on first sign-in (created: true).
+    federatedStore(subject: string, name: string, mode: Store["paymentMode"]) {
       return db.transaction(() => {
         const existing = db
           .prepare(
             "SELECT store_id FROM google_accounts WHERE subject=? AND environment=?",
           )
           .get(subject, mode) as { store_id: string } | undefined;
-        if (existing) return store(existing.store_id)!;
+        if (existing)
+          return { store: store(existing.store_id)!, created: false };
         const created = createStore(name, mode, "square_oauth", {
           scope: googleScope(subject, mode),
         }).store;
@@ -413,8 +420,60 @@ export function createRepo(
           mode,
           created.id,
         );
-        return created;
+        return { store: created, created: true };
       })();
+    },
+    // Email sign-up accounts own their store through the federated account table,
+    // like Google and Apple accounts, under an "email:" subject.
+    createEmailAccount(
+      account: {
+        email: string;
+        firstName: string;
+        lastName: string;
+        birthDate: string;
+        passwordHash: string;
+      },
+      mode: Store["paymentMode"],
+    ) {
+      return db.transaction(() => {
+        const email = account.email.toLowerCase();
+        if (db.prepare("SELECT 1 FROM email_accounts WHERE email=?").get(email))
+          throw new AppError(
+            409,
+            "An account with this email already exists. Sign in instead.",
+          );
+        const id = randomUUID();
+        db.prepare("INSERT INTO email_accounts VALUES(?,?,?,?,?,?,?)").run(
+          id,
+          email,
+          account.firstName,
+          account.lastName,
+          account.birthDate,
+          account.passwordHash,
+          new Date().toISOString(),
+        );
+        return this.googleStore(
+          "email:" + id,
+          `${account.firstName}'s store`.slice(0, 60),
+          mode,
+        );
+      })();
+    },
+    // The seller's name for a Google or Apple account, keyed by its account scope
+    // so it outlives any one storefront.
+    saveProfile(scope: string, firstName: string, lastName: string) {
+      db.prepare(
+        "INSERT INTO account_profiles VALUES(?,?,?,?) ON CONFLICT(scope) DO UPDATE SET first_name=excluded.first_name, last_name=excluded.last_name, updated_at=excluded.updated_at",
+      ).run(scope, firstName, lastName, new Date().toISOString());
+    },
+    emailAccount(email: string) {
+      return db
+        .prepare(
+          "SELECT id, first_name AS firstName, password_hash AS passwordHash FROM email_accounts WHERE email=?",
+        )
+        .get(email.toLowerCase()) as
+        | { id: string; firstName: string; passwordHash: string }
+        | undefined;
     },
     updateStore(
       id: string,

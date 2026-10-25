@@ -118,6 +118,42 @@ export type PaymentConnection = {
   business?: StoreBusiness;
 };
 export type StoreSummary = Store & { listed: number; available: number };
+// Whole years between a YYYY-MM-DD birth date and today.
+export function ageOn(birthDate: string, today = new Date()) {
+  const [y, m, d] = birthDate.split("-").map(Number);
+  const before =
+    today.getMonth() + 1 < m ||
+    (today.getMonth() + 1 === m && today.getDate() < d);
+  return today.getFullYear() - y - (before ? 1 : 0);
+}
+export function validBirthDate(birthDate: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) return false;
+  const [y, m, d] = birthDate.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return (
+    date.getUTCFullYear() === y &&
+    date.getUTCMonth() === m - 1 &&
+    date.getUTCDate() === d &&
+    ageOn(birthDate) <= 120
+  );
+}
+// Square requires account holders to be adults, so sellers must be 18 or older.
+export const MINIMUM_SELLER_AGE = 18;
+export const ProfileRequest = z.object({
+  firstName: z.string().trim().min(1).max(50),
+  lastName: z.string().trim().min(1).max(50),
+});
+export const SignUpRequest = ProfileRequest.extend({
+  birthDate: z
+    .string()
+    .refine(validBirthDate, "Enter a valid date of birth.")
+    .refine(
+      (v) => ageOn(v) >= MINIMUM_SELLER_AGE,
+      `Sellers must be at least ${MINIMUM_SELLER_AGE} years old.`,
+    ),
+  email: z.string().trim().toLowerCase().email().max(254),
+  password: z.string().min(8, "Use at least 8 characters.").max(512),
+});
 export const CreateStoreRequest = z.object({
   name: z.string().trim().min(2).max(60),
   requestKey: z.string().uuid(),
