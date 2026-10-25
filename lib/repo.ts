@@ -10,6 +10,7 @@ import {
 import type {
   DraftItem,
   Item,
+  ListingKit,
   Order,
   Store,
   StoreSnapshot,
@@ -50,6 +51,9 @@ export function createRepo(
     CREATE TABLE IF NOT EXISTS square_connections (store_id TEXT PRIMARY KEY REFERENCES stores(id), merchant_id TEXT NOT NULL, encrypted TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS seller_stores (store_id TEXT PRIMARY KEY REFERENCES stores(id), environment TEXT NOT NULL, request_key TEXT UNIQUE, created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS convex_removals (store_id TEXT PRIMARY KEY);
+    CREATE TABLE IF NOT EXISTS listing_kits (item_id TEXT PRIMARY KEY REFERENCES items(id), store_id TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS facebook_holds (item_id TEXT PRIMARY KEY REFERENCES items(id), store_id TEXT NOT NULL, quantity INTEGER NOT NULL, created_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS offline_sales (request_key TEXT PRIMARY KEY, store_id TEXT NOT NULL, item_id TEXT NOT NULL REFERENCES items(id), quantity INTEGER NOT NULL, at TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS items_store ON items(store_id);
     CREATE INDEX IF NOT EXISTS orders_store ON orders(store_id);
     CREATE INDEX IF NOT EXISTS seller_stores_environment ON seller_stores(environment, created_at);
@@ -153,6 +157,17 @@ export function createRepo(
       return { store: s, token };
     },
   );
+  function listingKit(itemId: string) {
+    return get<Omit<ListingKit, "price">>(
+      "SELECT data FROM listing_kits WHERE item_id=?",
+      itemId,
+    );
+  }
+  function saveListingKit(storeId: string, kit: Omit<ListingKit, "price">) {
+    db.prepare(
+      "INSERT INTO listing_kits VALUES(?,?,?,?) ON CONFLICT(item_id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at",
+    ).run(kit.itemId, storeId, JSON.stringify(kit), kit.updatedAt);
+  }
   function snapshot(id: string): StoreSnapshot {
     const s = store(id);
     if (!s) throw new AppError(404, "Store not found.");
@@ -164,11 +179,42 @@ export function createRepo(
     ))
       for (const l of o.lines)
         reserved.set(l.itemId, (reserved.get(l.itemId) || 0) + l.quantity);
+    // Units held for a Facebook Marketplace buyer are unavailable, like an open checkout.
+    const held = new Map(
+      (
+        db
+          .prepare(
+            "SELECT item_id,quantity FROM facebook_holds WHERE store_id=?",
+          )
+          .all(id) as { item_id: string; quantity: number }[]
+      ).map((h) => [h.item_id, h.quantity]),
+    );
+    const listings = new Map(
+      (
+        db
+          .prepare(
+            "SELECT item_id,json_extract(data,'$.status') AS status,json_extract(data,'$.url') AS url FROM listing_kits WHERE store_id=?",
+          )
+          .all(id) as {
+          item_id: string;
+          status: ListingKit["status"];
+          url: string | null;
+        }[]
+      ).map((k) => [
+        k.item_id,
+        { status: k.status, ...(k.url ? { url: k.url } : {}) },
+      ]),
+    );
     return {
       store: s,
       items: items(id).map((i) => ({
         ...i,
-        available: Math.max(0, i.remaining - (reserved.get(i.id) || 0)),
+        available: Math.max(
+          0,
+          i.remaining - (reserved.get(i.id) || 0) - (held.get(i.id) || 0),
+        ),
+        ...(held.has(i.id) ? { held: held.get(i.id) } : {}),
+        ...(listings.has(i.id) ? { marketplace: listings.get(i.id) } : {}),
       })),
       stats: {
         revenue: paid.reduce((s, o) => s + o.totalCents, 0) / 100,
@@ -190,6 +236,9 @@ export function createRepo(
       return {
         ...value,
         store: { ...value.store, locationId: undefined, merchantId: undefined },
+        items: value.items.map(
+          ({ held: _held, marketplace: _listing, ...i }) => i,
+        ),
         stats: { revenue: 0, sold: 0, orders: 0 },
         activity: [],
       };
@@ -305,6 +354,9 @@ export function createRepo(
         .prepare("SELECT environment FROM seller_stores WHERE store_id=?")
         .get(id) as { environment: string };
       for (const table of [
+        "listing_kits",
+        "facebook_holds",
+        "offline_sales",
         "orders",
         "items",
         "publishes",
@@ -751,6 +803,102 @@ export function createRepo(
         saveOrder(paid);
         touch(o.storeId, `Sale · ${o.lines.map((l) => l.name).join(", ")}`);
         return paid;
+      },
+    ),
+    item(storeId: string, itemId: string) {
+      const value = snapshot(storeId).items.find((i) => i.id === itemId);
+      if (!value) throw new AppError(404, "Item not found in this storefront.");
+      return value;
+    },
+    listingKit,
+    saveListingKit,
+    // Sets how many units are held for a Facebook buyer. Held stock can't be bought
+    // in the storefront, and a hold never takes stock that is in a buyer's checkout.
+    hold: db.transaction(
+      (storeId: string, itemId: string, quantity: number) => {
+        const current = snapshot(storeId).items.find((i) => i.id === itemId);
+        if (!current)
+          throw new AppError(404, "Item not found in this storefront.");
+        if (quantity > current.available + (current.held || 0))
+          throw new AppError(
+            409,
+            `Only ${current.available + (current.held || 0)} of these can be held right now. Any others are sold or in a buyer's checkout.`,
+          );
+        db.prepare(
+          "INSERT INTO facebook_holds VALUES(?,?,?,?) ON CONFLICT(item_id) DO UPDATE SET quantity=excluded.quantity",
+        ).run(itemId, storeId, quantity, now());
+        touch(storeId, `Held for a Facebook buyer · ${current.name}`);
+      },
+    ),
+    releaseHold: db.transaction((storeId: string, itemId: string) => {
+      const current = snapshot(storeId).items.find((i) => i.id === itemId);
+      if (!current)
+        throw new AppError(404, "Item not found in this storefront.");
+      if (!current.held) return;
+      db.prepare("DELETE FROM facebook_holds WHERE item_id=?").run(itemId);
+      touch(storeId, `Back in the store · ${current.name}`);
+    }),
+    // Records units sold on Facebook Marketplace. The app never sees that payment, so
+    // only the quantity is recorded; revenue counts verified Square payments only.
+    sellElsewhere: db.transaction(
+      (storeId: string, itemId: string, quantity: number, key: string) => {
+        const done = db
+          .prepare(
+            "SELECT store_id,item_id,quantity FROM offline_sales WHERE request_key=?",
+          )
+          .get(key) as
+          { store_id: string; item_id: string; quantity: number } | undefined;
+        if (done) {
+          if (
+            done.store_id !== storeId ||
+            done.item_id !== itemId ||
+            done.quantity !== quantity
+          )
+            throw new AppError(409, "This sale key was already used.");
+          return;
+        }
+        const current = snapshot(storeId).items.find((i) => i.id === itemId);
+        if (!current)
+          throw new AppError(404, "Item not found in this storefront.");
+        const held = current.held || 0;
+        if (quantity > current.available + held)
+          throw new AppError(
+            409,
+            `Only ${current.available + held} of these can be marked sold. Any others are already sold or in a buyer's checkout.`,
+          );
+        const stored = get<Item>("SELECT data FROM items WHERE id=?", itemId)!;
+        stored.remaining -= quantity;
+        stored.available = stored.remaining;
+        stored.status = stored.remaining === 0 ? "sold" : "live";
+        db.prepare("UPDATE items SET data=? WHERE id=?").run(
+          JSON.stringify(stored),
+          itemId,
+        );
+        if (held > quantity)
+          db.prepare(
+            "UPDATE facebook_holds SET quantity=? WHERE item_id=?",
+          ).run(held - quantity, itemId);
+        else
+          db.prepare("DELETE FROM facebook_holds WHERE item_id=?").run(itemId);
+        // The seller just sold the last unit on Facebook, so no reminder is needed.
+        const kit = listingKit(itemId);
+        if (kit && stored.remaining === 0)
+          saveListingKit(storeId, {
+            ...kit,
+            status: "closed",
+            updatedAt: now(),
+          });
+        db.prepare("INSERT INTO offline_sales VALUES(?,?,?,?,?)").run(
+          key,
+          storeId,
+          itemId,
+          quantity,
+          now(),
+        );
+        touch(
+          storeId,
+          `Sold on Facebook · ${quantity > 1 ? `${quantity} × ` : ""}${current.name}`,
+        );
       },
     ),
     outbox() {

@@ -2192,3 +2192,113 @@ footer > span {
     grid-template-columns: 1fr;
   }
 }
+.marketplace-panel .section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.marketplace-meta {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 10px 0;
+}
+.marketplace-meta a {
+  color: var(--green);
+  font-weight: 600;
+}
+.marketplace-panel .button:not(.primary) {
+  border: 1px solid #cbd5be;
+  background: white;
+  padding: 10px 16px;
+  min-height: 42px;
+  font-size: 13px;
+}
+.marketplace-panel .button.wide {
+  margin-top: 16px;
+}
+.marketplace-photo {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 16px;
+  background: #e9eddf;
+  margin-top: 14px;
+}
+.marketplace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+.marketplace-field {
+  display: block;
+  margin-top: 14px;
+}
+.marketplace-field > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.marketplace-field input,
+.marketplace-field textarea,
+.marketplace-field select {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+  padding: 11px 12px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+}
+.marketplace-field b {
+  font-weight: 500;
+}
+.marketplace-copy {
+  font-size: 12px;
+  padding: 4px 0;
+}
+.marketplace-warning {
+  font-size: 12px;
+  color: #8b3d28;
+  margin-top: 8px;
+}
+.marketplace-reminder {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: #fbe9e1;
+  color: #8b3d28;
+  border-radius: 14px;
+  padding: 14px;
+  margin: 12px 0;
+  font-size: 12px;
+}
+.marketplace-buyer {
+  border: 1px solid var(--line);
+  background: white;
+  border-radius: 16px;
+  padding: 16px;
+  margin-top: 22px;
+}
+.inventory-list > button {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  width: 100%;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 0;
+}
+.inventory-list > button:hover strong {
+  text-decoration: underline;
+}
+button.marketplace-reminder {
+  width: 100%;
+  text-align: left;
+  font-weight: 600;
+}

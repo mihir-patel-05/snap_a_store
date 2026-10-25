@@ -2,13 +2,39 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import sharp from "sharp";
 import { randomUUID } from "node:crypto";
-import { DraftItem } from "../contracts";
+import { Box, DraftItem } from "../contracts";
 import { AppError, requireConfig } from "../server/errors";
 export const VisionOutput = z.object({
   items: z
-    .array(DraftItem.omit({ id: true, price: true, photoId: true }))
+    .array(DraftItem.omit({ id: true, price: true, photoId: true, box: true }))
     .max(30),
 });
+// The model reports a pixel rectangle; store it as fractions of the photo, or drop it.
+export function normalizeBox(
+  value: unknown,
+  size?: { width: number; height: number },
+): Box | undefined {
+  if (!size?.width || !size.height || !value || typeof value !== "object")
+    return undefined;
+  const { x, y, width, height } = value as Record<string, unknown>;
+  if (![x, y, width, height].every((n) => typeof n === "number" && isFinite(n)))
+    return undefined;
+  const left = Math.max(0, (x as number) / size.width);
+  const top = Math.max(0, (y as number) / size.height);
+  const right = Math.min(1, ((x as number) + (width as number)) / size.width);
+  const bottom = Math.min(
+    1,
+    ((y as number) + (height as number)) / size.height,
+  );
+  const round = (n: number) => Math.round(n * 10000) / 10000;
+  const box = Box.safeParse({
+    x: round(left),
+    y: round(top),
+    w: round(right - left),
+    h: round(bottom - top),
+  });
+  return box.success ? box.data : undefined;
+}
 export async function prepareImage(bytes: Buffer) {
   try {
     const source = sharp(bytes, { limitInputPixels: 40_000_000 });
@@ -55,7 +81,16 @@ function tidy(output: unknown) {
     }),
   };
 }
+async function imageSize(bytes: Buffer) {
+  try {
+    const { width, height } = await sharp(bytes).metadata();
+    return width && height ? { width, height } : undefined;
+  } catch {
+    return undefined;
+  }
+}
 export async function scanPhoto(bytes: Buffer) {
+  const size = await imageSize(bytes);
   const client = new Anthropic({
     apiKey: requireConfig("ANTHROPIC_API_KEY"),
     maxRetries: 1,
@@ -81,7 +116,11 @@ export async function scanPhoto(bytes: Buffer) {
           },
           {
             type: "text",
-            text: "Make an editable listing for every distinct item on this table.",
+            text:
+              "Make an editable listing for every distinct item on this table." +
+              (size
+                ? ` The photo is ${size.width}×${size.height} pixels. For each listing, give a box in pixels around that item (or the whole bundle or group of identical units), or null if you can't place it.`
+                : " Set every box to null."),
           },
         ],
       },
@@ -120,6 +159,24 @@ export async function scanPhoto(bytes: Buffer) {
                     enum: ["Like new", "Good", "Fair", "Check condition"],
                   },
                   reasoning: { type: "string" },
+                  box: {
+                    anyOf: [
+                      {
+                        type: "object",
+                        description:
+                          "Pixel rectangle: x and y are the top-left corner.",
+                        properties: {
+                          x: { type: "number" },
+                          y: { type: "number" },
+                          width: { type: "number" },
+                          height: { type: "number" },
+                        },
+                        required: ["x", "y", "width", "height"],
+                        additionalProperties: false,
+                      },
+                      { type: "null" },
+                    ],
+                  },
                 },
                 required: [
                   "name",
@@ -130,6 +187,7 @@ export async function scanPhoto(bytes: Buffer) {
                   "confidence",
                   "condition",
                   "reasoning",
+                  "box",
                 ],
                 additionalProperties: false,
               },
@@ -159,9 +217,16 @@ export async function scanPhoto(bytes: Buffer) {
       502,
       "The image analysis returned incomplete listings. Try a clearer photo.",
     );
-  return result.data.items.map((i) => ({
-    ...i,
-    id: randomUUID(),
-    price: i.suggestedPrice,
-  }));
+  const boxes = ((output as { items?: { box?: unknown }[] }).items || []).map(
+    (i) => normalizeBox(i?.box, size),
+  );
+  return result.data.items.map((i, index) => {
+    const box = boxes[index];
+    return {
+      ...i,
+      id: randomUUID(),
+      price: i.suggestedPrice,
+      ...(box ? { box } : {}),
+    };
+  });
 }

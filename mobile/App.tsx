@@ -29,6 +29,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import QRCode from "react-native-qrcode-svg";
 import { googleSignIn } from "./lib/oauth";
 import { PaymentSetup } from "./components/payment-setup";
+import { ListingKitSheet } from "./components/listing-kit";
 import { ConvexClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 import { useFonts } from "expo-font";
@@ -162,6 +163,7 @@ function SellerApp() {
     [newStoreName, setNewStoreName] = useState(""),
     [deleteOpen, setDeleteOpen] = useState(false),
     [deleteName, setDeleteName] = useState(""),
+    [listingId, setListingId] = useState<string | null>(null),
     [comparisons, setComparisons] = useState<{
       item: DraftItem;
       rows: Comparison[];
@@ -1061,6 +1063,22 @@ function SellerApp() {
                   <Text style={s.statCaption}>Less stuff. More stories.</Text>
                 </View>
               </View>
+              {snapshot?.items
+                .filter(
+                  (i) => i.marketplace?.status === "listed" && !i.remaining,
+                )
+                .map((i) => (
+                  <Pressable
+                    key={`fb-${i.id}`}
+                    style={s.marketplaceReminder}
+                    onPress={() => setListingId(i.id)}
+                  >
+                    <Text style={s.marketplaceReminderText}>
+                      {i.name} sold here. Mark it sold on Facebook too.
+                    </Text>
+                    <ChevronRight size={16} color={C.danger} />
+                  </Pressable>
+                ))}
               {published > 0 ? (
                 <>
                   <View style={s.sectionRow}>
@@ -1073,7 +1091,7 @@ function SellerApp() {
                     <InventoryRow
                       key={i.id}
                       item={i}
-                      onPress={() => void Linking.openURL(storeUrl)}
+                      onPress={() => setListingId(i.id)}
                     />
                   ))}
                 </>
@@ -1183,7 +1201,7 @@ function SellerApp() {
                       <InventoryRow
                         key={i.id}
                         item={i}
-                        onPress={() => void Linking.openURL(storeUrl)}
+                        onPress={() => setListingId(i.id)}
                       />
                     ))}
                   {snapshot!.activity.length > 0 && (
@@ -1754,6 +1772,16 @@ function SellerApp() {
             </View>
           </View>
         </Modal>
+        {session && listingId ? (
+          <ListingKitSheet
+            storeId={session.store.id}
+            token={session.token}
+            item={snapshot?.items.find((i) => i.id === listingId) ?? null}
+            onClose={() => setListingId(null)}
+            onSnapshot={applySnapshot}
+            notify={notify}
+          />
+        ) : null}
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -1898,7 +1926,8 @@ function InventoryRow({
           <Text style={s.tiny}>
             {!item.remaining
               ? "Found a new home"
-              : `${item.available} available${item.remaining > item.available ? " · checkout in progress" : ""}`}
+              : `${item.available} available${item.held ? ` · ${item.held} held for Facebook` : ""}${item.remaining > item.available + (item.held || 0) ? " · checkout in progress" : ""}`}
+            {item.marketplace?.status === "listed" ? " · On Facebook" : ""}
           </Text>
         </View>
       </View>
@@ -1909,6 +1938,23 @@ function InventoryRow({
 }
 const s = StyleSheet.create({
   flex: { flex: 1, minWidth: 0 },
+  marketplaceReminder: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    minHeight: 48,
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: "#fbe9e1",
+    marginTop: 14,
+  },
+  marketplaceReminderText: {
+    flex: 1,
+    fontFamily: F.semi,
+    fontSize: 12,
+    lineHeight: 18,
+    color: C.danger,
+  },
   safe: { flex: 1, backgroundColor: C.paper },
   topBar: {
     height: 72,

@@ -2,6 +2,26 @@
 
 Checked October 24, 2026, using Node 22.22.2. This is evidence of the checks below, not certification of an unconfigured deployment.
 
+## Facebook Marketplace listing kit (October 25, 2026, Node 22.22.0)
+
+- 87 automated tests. New coverage:
+  - Listing kits are written only for the store owner (anonymous 401, another seller 403) and use the published price, never model output.
+  - Model text with a price, link, email, or phone number is rejected, with one retry, then a 502.
+  - Items marked `Check condition` need a condition first.
+  - Seller edits and the listed status are saved, and only `facebook.com` links are accepted. An empty link clears it; a malformed one returns 400.
+  - Marketplace state stays out of the public snapshot.
+  - The listing photo is a square crop around the scan's box without EXIF, or the whole photo.
+  - Facebook holds make stock unavailable to storefront checkouts and never take stock in an open checkout.
+  - Facebook sales are idempotent per request key, consume the hold first, leave revenue unchanged, close the listing when sold out, and keep an open checkout payable.
+  - Deleting a storefront removes kits, holds, and Facebook sales.
+  - The scan converts Claude's pixel boxes to fractions of the photo.
+- Root typecheck and production build. Native typecheck and Expo export for iOS, Android, and web after adding `expo-media-library` (pinned to `~58.0.12` with npm because `expo install` could not reach Expo's compatibility service).
+- Headless Chromium against the production build with a scratch database and seeded items, no external services:
+  - In `/studio` at 1280 px and 390 px: open an item's Marketplace panel, view the 348 px square crop, hold one unit, record a Facebook sale, and see the condition picker for an unchecked item.
+  - In the Expo web export at 390×844: open the listing sheet, hold an item (the row shows "1 held for Facebook"), and clear the "mark it sold on Facebook too" reminder.
+  - No JS exceptions or horizontal overflow.
+- Not run for this revision: a real Claude listing request, saving a photo to a device's library (needs a new EAS build; the current TestFlight binary doesn't include `expo-media-library`), and pasting a kit into the live Marketplace form to confirm field names, condition labels, and categories.
+
 ## Merge with Google sign-in and seller Square accounts (October 25, 2026, Node 22.22.0)
 
 - Storefronts are now owned per account: each Google seller (by subject and environment) or the password seller (per Square environment and location). Before this merge, any valid session could manage every storefront; with public Google signup that would have crossed sellers.

@@ -44,6 +44,14 @@
           "microphonePermission": false
         }
       ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Choose a photo to create your storefront.",
+          "savePhotosPermission": "Save listing photos so you can add them to Facebook Marketplace.",
+          "granularPermissions": []
+        }
+      ],
       "expo-secure-store"
     ],
     "extra": {

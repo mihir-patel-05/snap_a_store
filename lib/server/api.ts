@@ -6,8 +6,15 @@ import {
   CheckoutRequest,
   CreateStoreRequest,
   DeleteStoreRequest,
+  GenerateListingRequest,
+  HoldRequest,
   PublishRequest,
+  SoldElsewhereRequest,
+  UpdateListingRequest,
+  marketplaceCondition,
   type Integration,
+  type Item,
+  type ListingKit,
   StoreBusiness,
 } from "../contracts";
 import {
@@ -50,8 +57,140 @@ import {
   verifySquareSignature,
 } from "../providers/square";
 import { comparePrices } from "../providers/apify";
+import { listingPhoto, writeListing } from "../providers/listing";
 import { narration, speak } from "../providers/cartesia";
 import { syncInventory } from "../providers/convex";
+// The saved crop wins (null means the whole photo); otherwise the scan's suggestion.
+function cropFor(item: Item, kit?: Omit<ListingKit, "price">) {
+  return kit && kit.crop !== undefined ? kit.crop : (item.box ?? null);
+}
+function photoFor(storeId: string, item: Item) {
+  const photo = item.photoId ? repo.photo(item.photoId) : undefined;
+  return photo?.store_id === storeId ? photo.bytes : undefined;
+}
+// Marketplace listing kits, Facebook holds, and Facebook sales for one published item.
+async function marketplaceRoute(
+  req: Request,
+  method: string,
+  storeId: string,
+  rawItemId: string,
+  action: string,
+) {
+  let itemId: string;
+  try {
+    itemId = decodeURIComponent(rawItemId);
+  } catch {
+    throw new AppError(400, "Invalid item.");
+  }
+  if (method === "GET" && action === "listing-photo") {
+    // Photos of published items are already public; this is the cropped copy.
+    const item = repo.item(storeId, itemId);
+    const bytes = photoFor(storeId, item);
+    if (!bytes) throw new AppError(404, "This item has no photo.");
+    return new Response(
+      (await listingPhoto(
+        bytes,
+        cropFor(item, repo.listingKit(itemId)),
+      )) as BodyInit,
+      {
+        headers: {
+          "Content-Type": "image/jpeg",
+          "Cache-Control": "no-store",
+          "Content-Disposition": `inline; filename="${
+            item.name
+              .replace(/[^\w -]/g, "")
+              .trim()
+              .slice(0, 60) || "listing"
+          }.jpg"`,
+          "X-Content-Type-Options": "nosniff",
+        },
+      },
+    );
+  }
+  auth(req, storeId);
+  const item = repo.item(storeId, itemId);
+  const withPrice = (kit: Omit<ListingKit, "price">): ListingKit => ({
+    ...kit,
+    price: item.price,
+  });
+  if (action === "listing") {
+    const existing = repo.listingKit(itemId);
+    if (method === "GET") {
+      if (!existing) throw new AppError(404, "No listing yet.");
+      return json(withPrice(existing));
+    }
+    if (method === "POST") {
+      const data = GenerateListingRequest.parse(await body(req));
+      const condition =
+        data.condition ??
+        existing?.condition ??
+        marketplaceCondition[item.condition];
+      if (!condition)
+        throw new AppError(
+          400,
+          "Choose this item's condition before writing its listing.",
+        );
+      // Provider limits apply to the seller, not each storefront.
+      rateLimit("seller:listing", 8);
+      const crop = cropFor(item, existing);
+      const bytes = photoFor(storeId, item);
+      const { copy, warnings } = await writeListing(
+        item,
+        condition,
+        bytes ? await listingPhoto(bytes, crop) : undefined,
+      );
+      const kit = {
+        ...copy,
+        itemId,
+        condition,
+        crop,
+        warnings,
+        status: existing?.status ?? ("draft" as const),
+        ...(existing?.url ? { url: existing.url } : {}),
+        ...(existing?.listedAt ? { listedAt: existing.listedAt } : {}),
+        updatedAt: new Date().toISOString(),
+      };
+      repo.saveListingKit(storeId, kit);
+      return json(withPrice(kit));
+    }
+    if (method === "PATCH") {
+      if (!existing)
+        throw new AppError(404, "Write the listing before editing it.");
+      const { url: link, ...patch } = UpdateListingRequest.parse(
+        await body(req),
+      );
+      const kit = {
+        ...existing,
+        ...patch,
+        updatedAt: new Date().toISOString(),
+      };
+      if (link === "") delete kit.url;
+      else if (link) kit.url = link;
+      if (kit.status === "listed" && !kit.listedAt)
+        kit.listedAt = kit.updatedAt;
+      repo.saveListingKit(storeId, kit);
+      return json(withPrice(kit));
+    }
+  }
+  if (action === "facebook-hold" && method === "POST") {
+    const { quantity } = HoldRequest.parse(await body(req));
+    repo.hold(storeId, itemId, quantity);
+    await syncInventory();
+    return json(repo.snapshot(storeId));
+  }
+  if (action === "facebook-hold" && method === "DELETE") {
+    repo.releaseHold(storeId, itemId);
+    await syncInventory();
+    return json(repo.snapshot(storeId));
+  }
+  if (action === "sold-elsewhere" && method === "POST") {
+    const data = SoldElsewhereRequest.parse(await body(req));
+    repo.sellElsewhere(storeId, itemId, data.quantity, data.requestKey);
+    await syncInventory();
+    return json(repo.snapshot(storeId));
+  }
+  throw new AppError(404, "Endpoint not found.");
+}
 const json = (data: unknown, status = 200) =>
   Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
 function rateLimit(key: string, limit = 25) {
@@ -348,6 +487,8 @@ async function route(req: Request): Promise<Response> {
         return json(await paymentConnection(repo.store(id)!));
       }
     }
+    if (p[2] === "items" && p[3] && p[4] && p.length === 5)
+      return marketplaceRoute(req, method, id, p[3], p[4]);
     if (method === "GET" && p.length === 2) {
       if (token(req)) {
         try {

@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { Brand, ItemArt } from "@/components/brand";
 import { PaymentSetup } from "@/components/payment-setup";
+import { MarketplacePanel } from "@/components/marketplace-panel";
 import { newRequestKey } from "@/lib/request-key";
 import { api, useStore } from "@/lib/client";
 import {
@@ -816,8 +817,17 @@ function ArrowUpRightIcon() {
   return <ExternalLink size={14} />;
 }
 function Dashboard({ id }: { id: string }) {
-  const { data } = useStore(id);
+  const { data: polled } = useStore(id);
+  // A hold or Facebook sale shows at once instead of waiting for the next refresh.
+  const [latest, setLatest] = useState<StoreSnapshot | null>(null),
+    [listingId, setListingId] = useState<string | null>(null);
+  const data =
+    latest?.store.id === id &&
+    (!polled || latest.store.revision > polled.store.revision)
+      ? latest
+      : polled;
   if (!data?.items.length) return null;
+  const listing = data.items.find((i) => i.id === listingId);
   return (
     <>
       <div className="stats">
@@ -846,22 +856,49 @@ function Dashboard({ id }: { id: string }) {
           Open storefront <ExternalLink size={16} />
         </a>
       </div>
+      {data.items
+        .filter((i) => i.marketplace?.status === "listed" && !i.remaining)
+        .map((i) => (
+          <button
+            key={`fb-${i.id}`}
+            type="button"
+            className="marketplace-reminder"
+            onClick={() => setListingId(i.id)}
+          >
+            {i.name} sold here. Mark it sold on Facebook too.
+          </button>
+        ))}
       <div className="inventory-list">
         {data.items.map((i) => (
-          <div key={i.id}>
+          <button
+            key={i.id}
+            type="button"
+            aria-label={`${i.name}: list on Facebook Marketplace`}
+            onClick={() => setListingId(i.id)}
+          >
             <ItemArt name={i.name} category={i.category} photoId={i.photoId} />
             <span>
               <strong>{i.name}</strong>
               <small>
                 {i.remaining === 0
                   ? "Sold out"
-                  : `${i.available} available${i.remaining > i.available ? " · checkout in progress" : ""}`}
+                  : `${i.available} available${i.held ? ` · ${i.held} held for Facebook` : ""}${i.remaining > i.available + (i.held || 0) ? " · checkout in progress" : ""}`}
+                {i.marketplace?.status === "listed" ? " · On Facebook" : ""}
               </small>
             </span>
             <b>{money(i.price)}</b>
-          </div>
+          </button>
         ))}
       </div>
+      {listing && (
+        <MarketplacePanel
+          key={listing.id}
+          storeId={id}
+          item={listing}
+          onClose={() => setListingId(null)}
+          onSnapshot={setLatest}
+        />
+      )}
     </>
   );
 }

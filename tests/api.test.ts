@@ -38,7 +38,7 @@ beforeEach(() => {
   }))
     vi.stubEnv(k, v);
   repo.db.exec(
-    "DELETE FROM limits; DELETE FROM jobs; DELETE FROM sessions; DELETE FROM primary_stores; DELETE FROM outbox; DELETE FROM activity; DELETE FROM publishes; DELETE FROM photos; DELETE FROM orders; DELETE FROM items; DELETE FROM seller_stores; DELETE FROM convex_removals; DELETE FROM stores;",
+    "DELETE FROM listing_kits; DELETE FROM facebook_holds; DELETE FROM offline_sales; DELETE FROM limits; DELETE FROM jobs; DELETE FROM sessions; DELETE FROM primary_stores; DELETE FROM outbox; DELETE FROM activity; DELETE FROM publishes; DELETE FROM photos; DELETE FROM orders; DELETE FROM items; DELETE FROM seller_stores; DELETE FROM convex_removals; DELETE FROM stores;",
   );
 });
 afterAll(() => {
@@ -636,6 +636,25 @@ describe("multiple storefronts", () => {
       .store;
     const item = publishTo(second.id);
     const kept = publishTo(session.store.id);
+    // Marketplace records for a second item: a listing kit, a hold, and a Facebook sale.
+    const mugKey = randomUUID();
+    const mug = repo.beginPublish(second.id, mugKey, [fixtureItems[0]])
+      .items[0];
+    repo.finishPublish(second.id, mugKey, [mug]);
+    repo.saveListingKit(second.id, {
+      itemId: mug.id,
+      title: "Blue ceramic mug",
+      description: "Glazed ceramic mug with a generous handle.",
+      category: "Kitchen & Dining",
+      tags: [],
+      condition: "Used – Good",
+      crop: null,
+      warnings: [],
+      status: "listed",
+      updatedAt: new Date().toISOString(),
+    });
+    repo.sellElsewhere(second.id, mug.id, 1, randomUUID());
+    repo.hold(second.id, mug.id, 1);
     const photo = repo.savePhoto(second.id, Buffer.from("photo"));
     const sale = repo.reserve(second.id, randomUUID(), [
       { itemId: item.id, quantity: 1 },
@@ -676,6 +695,9 @@ describe("multiple storefronts", () => {
       "publishes",
       "outbox",
       "seller_stores",
+      "listing_kits",
+      "facebook_holds",
+      "offline_sales",
     ])
       expect(rows(table, second.id)).toBe(0);
     expect(repo.convexRemovals()).toEqual([second.id]);

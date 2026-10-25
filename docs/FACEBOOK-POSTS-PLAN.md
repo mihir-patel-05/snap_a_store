@@ -1,6 +1,6 @@
 # Plan: clean Facebook Marketplace posts from published items
 
-Status: proposal, not implemented. Written October 25, 2026, then updated the same day with the seller's decisions.
+Status: built October 25, 2026. See `docs/VALIDATION.md` for what was verified and what still needs a device and a live Marketplace check.
 
 ## Goal
 
@@ -34,7 +34,7 @@ So the app prepares the listing and the seller pastes it into Facebook's own **C
 4. **Open Marketplace** opens `https://www.facebook.com/marketplace/create/item`. Meta documents no prefill parameters, so fields are pasted.
 5. After posting, the seller taps **I listed it** and can paste the listing URL. The item then shows a "Listed on Facebook" badge.
 6. Facebook buyer activity is kept in step with the storefront:
-   - **Pending on Facebook** holds the item when a Marketplace buyer commits to a pickup. It disappears from the storefront but stays in the seller's stock.
+   - **Hold for Facebook buyer** holds the item when a Marketplace buyer commits to a pickup. It disappears from the storefront but stays in the seller's stock.
    - **Release** returns a held item to the storefront if that buyer doesn't show up.
    - **Sold on Facebook** records the sale and removes the stock.
 7. When an item sells in the storefront and it was listed on Facebook, the item sheet and home screen show **Mark this sold on Facebook too** until the seller dismisses it.
@@ -79,22 +79,22 @@ CLAUDE.md and the README warn against selling the same stock through a separate 
 
 ## API
 
-| Method and path | Purpose |
-| --- | --- |
-| `GET /api/stores/:id/items/:itemId/listing` | Saved kit, or 404 |
-| `POST /api/stores/:id/items/:itemId/listing` | Generate or regenerate the kit (Claude, rate-limited) |
-| `PATCH /api/stores/:id/items/:itemId/listing` | Seller edits to text, category, condition, crop, and the listed status/URL |
-| `GET /api/stores/:id/items/:itemId/listing-photo` | Cropped, metadata-free JPEG. Owner-only until the item is published, matching `publishedPhoto` |
-| `POST /api/stores/:id/items/:itemId/facebook-hold` | `{ quantity, requestKey }` places a hold |
-| `DELETE /api/stores/:id/items/:itemId/facebook-hold` | Releases the hold |
-| `POST /api/stores/:id/items/:itemId/sold-elsewhere` | `{ quantity, requestKey }` records a Facebook sale, using any hold first |
+| Method and path                                      | Purpose                                                                                        |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `GET /api/stores/:id/items/:itemId/listing`          | Saved kit, or 404                                                                              |
+| `POST /api/stores/:id/items/:itemId/listing`         | Generate or regenerate the kit (Claude, rate-limited)                                          |
+| `PATCH /api/stores/:id/items/:itemId/listing`        | Seller edits to text, category, condition, crop, and the listed status/URL                     |
+| `GET /api/stores/:id/items/:itemId/listing-photo`    | Cropped, metadata-free JPEG. Owner-only until the item is published, matching `publishedPhoto` |
+| `POST /api/stores/:id/items/:itemId/facebook-hold`   | `{ quantity }` sets how many units are held (repeating it is harmless)                         |
+| `DELETE /api/stores/:id/items/:itemId/facebook-hold` | Releases the hold                                                                              |
+| `POST /api/stores/:id/items/:itemId/sold-elsewhere`  | `{ quantity, requestKey }` records a Facebook sale, using any hold first                       |
 
 All routes use the existing `auth(req, id)` ownership check. The item must belong to that store. Item IDs contain `:`, so encode them in URLs.
 
 ## Data (SQLite)
 
 - `listing_kits (item_id PK REFERENCES items(id), store_id, data, updated_at)`. `data` holds the copy, crop, and `facebook: { status, url?, listedAt? }`.
-- `facebook_holds (item_id PK REFERENCES items(id), store_id, quantity, request_key, created_at)`.
+- `facebook_holds (item_id PK REFERENCES items(id), store_id, quantity, created_at)`.
 - `offline_sales (request_key PK, store_id, item_id, quantity, at)`.
 - `deleteStore` removes all three. Extend the deletion-completeness test.
 
