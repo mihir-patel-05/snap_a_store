@@ -8,6 +8,7 @@ import {
   View,
 } from "react-native";
 import { api } from "../lib/api";
+import { C, F, R, T } from "../lib/theme";
 import { connectSquareAccount } from "../lib/oauth";
 import type {
   Store,
@@ -101,8 +102,12 @@ export function PaymentSetup({
               style={[s.location, locationId === location.id && s.selected]}
               onPress={() => setLocationId(location.id)}
             >
-              <Text style={s.body}>
-                {locationId === location.id ? "● " : "○ "}
+              <Text
+                style={[
+                  s.locationText,
+                  locationId === location.id && s.locationTextOn,
+                ]}
+              >
                 {location.name}
               </Text>
             </Pressable>
@@ -158,7 +163,7 @@ export function PaymentSetup({
       >
         <Text style={s.buttonText}>Save store settings</Text>
       </Pressable>
-      {busy && <ActivityIndicator color="#193d33" />}
+      {busy && <ActivityIndicator color={C.green} />}
       {!!error && (
         <Text accessibilityRole="alert" style={s.error}>
           {error}
@@ -174,48 +179,69 @@ export function PaymentSetup({
 }
 const s = StyleSheet.create({
   card: {
-    backgroundColor: "#fffefa",
-    borderColor: "#d7dfd1",
+    backgroundColor: C.white,
+    borderColor: C.line,
     borderWidth: 1,
-    borderRadius: 18,
+    borderRadius: R.md,
     padding: 20,
-    marginBottom: 24,
-    gap: 12,
+    marginBottom: 20,
+    gap: 14,
   },
-  heading: { fontSize: 22, fontWeight: "600", color: "#193d33" },
-  body: { fontSize: 15, lineHeight: 22, color: "#193d33" },
+  heading: {
+    fontFamily: F.serif,
+    fontSize: 24,
+    lineHeight: 30,
+    letterSpacing: -0.5,
+    color: C.ink,
+  },
+  body: { fontFamily: F.regular, ...T.callout, lineHeight: 23, color: C.muted },
   label: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#52634d",
+    fontFamily: F.semi,
+    ...T.caption,
+    letterSpacing: 1,
+    color: C.muted,
     marginBottom: 8,
-    marginTop: 6,
+    marginTop: 4,
   },
   input: {
-    backgroundColor: "#fff",
+    fontFamily: F.regular,
+    ...T.body,
+    backgroundColor: "white",
     borderWidth: 1,
-    borderColor: "#d7dfd1",
-    borderRadius: 8,
-    minHeight: 48,
-    padding: 12,
-    color: "#193d33",
-    fontSize: 16,
+    borderColor: C.line,
+    borderRadius: R.sm,
+    minHeight: 52,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    color: C.ink,
   },
   button: {
-    minHeight: 48,
-    backgroundColor: "#214c3e",
-    padding: 14,
-    borderRadius: 10,
+    minHeight: 56,
+    backgroundColor: C.green,
+    padding: 16,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
   },
-  buttonText: { color: "#fff", fontWeight: "600", fontSize: 16 },
-  error: { color: "#a43f25", fontSize: 14, lineHeight: 21 },
-  location: {
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "#d7dfd1",
-    borderRadius: 8,
+  buttonText: { fontFamily: F.semi, ...T.headline, color: "white" },
+  error: {
+    fontFamily: F.regular,
+    ...T.subhead,
+    lineHeight: 21,
+    color: C.errorInk,
   },
-  selected: { backgroundColor: "#e5efcf", borderColor: "#214c3e" },
+  location: {
+    minHeight: 48,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: C.line,
+    borderRadius: R.sm,
+    backgroundColor: "white",
+    marginBottom: 8,
+  },
+  selected: { backgroundColor: C.sage, borderColor: C.green },
+  locationText: { fontFamily: F.medium, ...T.callout, color: C.ink },
+  locationTextOn: { fontFamily: F.semi, color: C.green },
 });
