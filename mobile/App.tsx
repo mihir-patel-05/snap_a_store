@@ -88,7 +88,7 @@ import {
   type StoreSummary,
   type StoreSnapshot,
   type Integration,
-  type Comparison,
+  marketSummary,
 } from "./lib/api";
 import { C, F, R, T } from "./lib/theme";
 type Tab = "home" | "store" | "connections";
@@ -155,12 +155,7 @@ function SellerApp() {
     [newStoreName, setNewStoreName] = useState(""),
     [deleteOpen, setDeleteOpen] = useState(false),
     [deleteName, setDeleteName] = useState(""),
-    [whyOpen, setWhyOpen] = useState<string[]>([]),
-    [comparisons, setComparisons] = useState<{
-      item: DraftItem;
-      rows: Comparison[];
-      note: string;
-    } | null>(null);
+    [whyOpen, setWhyOpen] = useState<string[]>([]);
   useEffect(() => {
     setEditingItem(null);
   }, [session?.store.id]);
@@ -470,7 +465,7 @@ function SellerApp() {
           ? await ImagePicker.launchCameraAsync(options)
           : await ImagePicker.launchImageLibraryAsync(options);
         if (result.canceled) return;
-        setBusy("Claude is taking a closer look");
+        setBusy("Identifying and pricing your items");
         const asset = result.assets[0];
         const processed = await ImageManipulator.manipulateAsync(
           asset.uri,
@@ -483,10 +478,13 @@ function SellerApp() {
             ? await (await fetch(processed.uri)).blob()
             : new File(processed.uri);
         const form = photoForm(upload);
+        // Scans can include a market-price lookup and a second Claude pass.
         const r = await api<{ items: DraftItem[]; message: string }>(
           `/scan?storeId=${s.store.id}`,
           s.token,
           form,
+          undefined,
+          180000,
         );
         if (!r.items.length) throw new Error(r.message);
         setDrafts(r.items);
@@ -1003,39 +1001,40 @@ function SellerApp() {
                               • {f}
                             </Text>
                           ))}
+                          {d.priceRationale.market && (
+                            <>
+                              <Text style={s.reason}>
+                                <Text style={s.reasonLead}>Market check.</Text>{" "}
+                                {marketSummary(d.priceRationale.market)}
+                              </Text>
+                              {d.priceRationale.market.listings.map((c, n) => (
+                                <Pressable
+                                  key={n}
+                                  style={s.comparisonRow}
+                                  accessibilityRole="link"
+                                  onPress={() => void Linking.openURL(c.url)}
+                                >
+                                  <Text style={[s.comparisonName, s.flex]}>
+                                    {c.title}
+                                  </Text>
+                                  <Text style={s.comparisonPrice}>
+                                    {money(c.price)}
+                                  </Text>
+                                  <ArrowUpRight size={15} color={C.green} />
+                                </Pressable>
+                              ))}
+                            </>
+                          )}
                         </>
                       )}
                       <Text style={s.reason}>{d.reasoning}</Text>
                       <Text style={[s.reason, s.reasonItalic]}>
-                        Claude’s estimate from your photo, not an appraisal or
-                        recent sales.
+                        {d.priceRationale?.market?.listings.length
+                          ? "Claude’s estimate from your photo and active asking prices, not an appraisal or recent sales."
+                          : "Claude’s estimate from your photo, not an appraisal or recent sales."}
                       </Text>
                     </View>
                   )}
-                  <Pressable
-                    style={s.comparison}
-                    disabled={!!busy}
-                    onPress={() =>
-                      void run("Finding current asking prices", async () => {
-                        const result = await api<{
-                          comparisons: Comparison[];
-                          note: string;
-                        }>("/compare", session!.token, {
-                          storeId: session!.store.id,
-                          name: d.name,
-                        });
-                        setComparisons({
-                          item: d,
-                          rows: result.comparisons,
-                          note: result.note,
-                        });
-                      })
-                    }
-                  >
-                    <TrendingUp size={16} color={C.green} />
-                    <Text style={s.smallBold}>Compare market prices</Text>
-                    <ArrowUpRight size={15} color={C.green} />
-                  </Pressable>
                 </View>
               ))}
               <View style={s.reviewTotal}>
@@ -1814,61 +1813,6 @@ function SellerApp() {
             </View>
           </View>
         </Modal>
-        <Modal
-          transparent
-          visible={!!comparisons}
-          animationType="slide"
-          onRequestClose={() => setComparisons(null)}
-        >
-          <View style={s.modalBackground}>
-            <Pressable
-              style={s.modalDismiss}
-              accessibilityLabel="Close price comparisons"
-              onPress={() => setComparisons(null)}
-            />
-            <View style={[s.sheet, { maxHeight: "80%" }]}>
-              <View style={s.sheetHandle} />
-              <Text style={s.sheetTitle}>
-                A little price<Text style={s.italic}> perspective.</Text>
-              </Text>
-              <Text style={s.sheetBody}>{comparisons?.note}</Text>
-              <ScrollView>
-                {comparisons?.rows.length ? (
-                  comparisons.rows.map((c) => (
-                    <Pressable
-                      key={c.url}
-                      style={s.comparisonRow}
-                      onPress={() => void Linking.openURL(c.url)}
-                    >
-                      <View style={s.flex}>
-                        <Text style={s.comparisonName}>{c.title}</Text>
-                        <Text style={s.tiny}>eBay · active asking price</Text>
-                      </View>
-                      <Text style={s.comparisonPrice}>{money(c.price)}</Text>
-                      <ArrowUpRight size={15} color={C.green} />
-                    </Pressable>
-                  ))
-                ) : (
-                  <Text style={s.emptyBody}>
-                    No comparable listings found. Use your own judgment for this
-                    item.
-                  </Text>
-                )}
-              </ScrollView>
-              <Pressable
-                style={s.secondaryButton}
-                onPress={() => void signOut()}
-                disabled={!!busy}
-              >
-                <Text style={s.buttonDark}>Sign out</Text>
-              </Pressable>
-              <Text style={s.serverNote}>
-                Powered by Apify. Similar listings may differ in condition or
-                model.
-              </Text>
-            </View>
-          </View>
-        </Modal>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -2590,16 +2534,6 @@ const s = StyleSheet.create({
   },
   reasonLead: { fontFamily: F.semi, color: C.ink },
   reasonItalic: { fontFamily: F.italic, fontSize: 16, color: C.moss },
-  comparison: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    borderTopWidth: 1,
-    borderTopColor: C.line,
-    paddingTop: 14,
-    marginTop: 14,
-    minHeight: 44,
-  },
   reviewTotal: {
     flexDirection: "row",
     alignItems: "center",
@@ -2991,7 +2925,7 @@ const s = StyleSheet.create({
     flexDirection: "row",
     gap: 12,
     alignItems: "center",
-    paddingVertical: 16,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: C.line,
     minHeight: 64,

@@ -122,7 +122,7 @@ The worker runs roughly once a minute. It queries Square for pending payments an
 
 If you host without Compose, run `npm run build`, `npm start`, and `npm run maintenance -- --watch` as supervised processes behind HTTPS. A scheduler may instead run `npm run maintenance` every minute. The worker authenticates with `MAINTENANCE_SECRET`; keep it private. Do not use Vercel-style ephemeral functions with this SQLite architecture.
 
-## 5. Apify: market comparisons (optional)
+## 5. Apify: market-checked prices (optional)
 
 1. Create an [Apify account](https://console.apify.com/), add billing/credits, and obtain an API token under Settings → Integrations.
 2. Open [the configured eBay actor](https://apify.com/ninhothedev/ebay-scraper). Authorize its use in your account and check its current pricing.
@@ -133,7 +133,7 @@ APIFY_TOKEN=your_private_token
 APIFY_ACTOR_ID=ninhothedev~ebay-scraper
 ```
 
-4. Restart the backend. In item review, use Compare market prices. Verify sourced eBay links and USD prices. These are active asking prices, not completed sales. Seller pricing remains editable. `check:services` checks actor accessibility without running a paid scrape; the actual comparison verifies the actor input/output contract.
+4. Restart the backend and scan a photo with an identifiable product (a visible brand, model, or book title). Each scan searches eBay for up to 6 such items, one actor run each, so budget Apify credits accordingly. Claude then picks the listings that match the item in the photo and sets the final price from them. Under **Why this price?**, verify the matched eBay links and USD prices. These are active asking prices, not completed sales. Generic items are not searched. Without `APIFY_TOKEN`, or when a run fails, scans keep Claude's own estimate and show no market check. Seller pricing remains editable. `check:services` checks actor accessibility without running a paid scrape; a real scan verifies the actor input/output contract.
 
 ## 6. Cartesia: spoken storefront (optional)
 

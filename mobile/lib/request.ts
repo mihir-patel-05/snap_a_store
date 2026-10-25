@@ -9,9 +9,10 @@ export async function requestJson<T>(
   url: string,
   init: RequestInit,
   fetcher: JsonFetch,
+  timeoutMs = 65000,
 ): Promise<T> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 65000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     let response: Awaited<ReturnType<JsonFetch>>;
     try {

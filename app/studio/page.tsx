@@ -11,7 +11,6 @@ import {
   Sparkles,
   Trash2,
   ArrowLeft,
-  TrendingUp,
   ScanLine,
   Pencil,
 } from "lucide-react";
@@ -23,11 +22,11 @@ import { api, useStore } from "@/lib/client";
 import {
   Condition,
   money,
+  marketSummary,
   type DraftItem,
   type Store,
   type StoreSummary,
   type StoreSnapshot,
-  type Comparison,
 } from "@/lib/contracts";
 type SellerStores = { store: Store; stores: StoreSummary[] };
 const activeStoreKey = "snap-active-store";
@@ -46,12 +45,7 @@ export default function Studio() {
     [password, setPassword] = useState(""),
     [booted, setBooted] = useState(false),
     [url, setUrl] = useState(""),
-    [name, setName] = useState("The Sunday Edit"),
-    [comparisons, setComparisons] = useState<{
-      id: string;
-      data: Comparison[];
-      note: string;
-    } | null>(null);
+    [name, setName] = useState("The Sunday Edit");
   const input = useRef<HTMLInputElement>(null),
     key = useRef(""),
     storeKey = useRef("");
@@ -117,7 +111,6 @@ export default function Studio() {
     setStore(next);
     setName(next.name);
     setUrl("");
-    setComparisons(null);
     setDeleteName(null);
     try {
       localStorage.setItem(activeStoreKey, next.id);
@@ -200,7 +193,7 @@ export default function Studio() {
     }
   }
   function scan(file: File) {
-    void work("Taking a closer look with Claude", async () => {
+    void work("Identifying and pricing your items", async () => {
       const s = await ensureStore();
       const form = new FormData();
       form.set("photo", file);
@@ -604,62 +597,36 @@ export default function Studio() {
                                 ))}
                               </ul>
                             )}
+                            {d.priceRationale.market && (
+                              <div className="comps">
+                                <p>
+                                  <b>Market check.</b>{" "}
+                                  {marketSummary(d.priceRationale.market)}
+                                </p>
+                                {d.priceRationale.market.listings.map(
+                                  (c, n) => (
+                                    <a
+                                      key={n}
+                                      href={c.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      {c.title}
+                                      <b>{money(c.price)}</b>
+                                    </a>
+                                  ),
+                                )}
+                              </div>
+                            )}
                           </>
                         )}
                         <p>{d.reasoning}</p>
                         <p className="rationale-note">
-                          Claude’s estimate from your photo, not an appraisal or
-                          recent sales.
+                          {d.priceRationale?.market?.listings.length
+                            ? "Claude’s estimate from your photo and active asking prices, not an appraisal or recent sales."
+                            : "Claude’s estimate from your photo, not an appraisal or recent sales."}
                         </p>
                       </details>
-                      <button
-                        className="compare-button"
-                        disabled={!!busy || publishLocked}
-                        onClick={() =>
-                          void work(
-                            "Checking current asking prices",
-                            async () => {
-                              const r = await api<{
-                                comparisons: Comparison[];
-                                note: string;
-                              }>("/compare", {
-                                method: "POST",
-                                body: JSON.stringify({
-                                  storeId: store!.id,
-                                  name: d.name,
-                                }),
-                              });
-                              setComparisons({
-                                id: d.id,
-                                data: r.comparisons,
-                                note: r.note,
-                              });
-                            },
-                          )
-                        }
-                      >
-                        <TrendingUp size={15} /> Compare market prices
-                      </button>
-                      {comparisons?.id === d.id && (
-                        <div className="comps">
-                          <small>{comparisons.note}</small>
-                          {comparisons.data.length ? (
-                            comparisons.data.map((c) => (
-                              <a
-                                key={c.url}
-                                href={c.url}
-                                target="_blank"
-                                rel="noreferrer"
-                              >
-                                {c.title}
-                                <b>{money(c.price)}</b>
-                              </a>
-                            ))
-                          ) : (
-                            <p>No comparable listings found.</p>
-                          )}
-                        </div>
-                      )}
                     </div>
                   </article>
                 ))}

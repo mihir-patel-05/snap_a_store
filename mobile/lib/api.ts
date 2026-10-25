@@ -10,6 +10,7 @@ import type {
   StoreSnapshot,
   Integration,
   Comparison,
+  MarketEvidence,
 } from "../../lib/contracts";
 export type {
   DraftItem,
@@ -24,6 +25,13 @@ export const API_URL = (
   (Platform.OS === "android" ? "http://10.0.2.2:3000" : "http://localhost:3000")
 ).replace(/\/$/, "");
 export const money = (value: number) => `$${value.toFixed(value % 1 ? 2 : 0)}`;
+// Mirrors marketSummary in lib/contracts.ts.
+export const marketSummary = (m: MarketEvidence) =>
+  m.listings.length
+    ? `${m.listings.length} of ${m.checked} active eBay listings for “${m.query}” look like the same item${m.median ? ` (median asking price ${money(m.median)})` : ""}. Asking prices, not sales.`
+    : m.checked
+      ? `None of the ${m.checked} active eBay listings for “${m.query}” matched closely, so this is Claude’s estimate.`
+      : `No active eBay listings found for “${m.query}”, so this is Claude’s estimate.`;
 const key = "snap-owner-v2";
 // `store` is the storefront currently open on this device. The storefront list is
 // fetched from the server, never kept in SecureStore (values should stay small).
@@ -54,6 +62,7 @@ export async function api<T>(
   token?: string,
   body?: unknown,
   method?: string,
+  timeoutMs?: number,
 ): Promise<T> {
   const multipart = body instanceof FormData;
   return requestJson<T>(
@@ -67,5 +76,6 @@ export async function api<T>(
       ...(body ? { body: multipart ? body : JSON.stringify(body) } : {}),
     },
     expoFetch,
+    timeoutMs,
   );
 }

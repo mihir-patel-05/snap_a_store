@@ -16,12 +16,32 @@ export const Condition = z.enum([
   "Check condition",
 ]);
 export type Condition = z.infer<typeof Condition>;
+export const Comparison = z.object({
+  title: z.string().max(200),
+  price: z.number().positive().max(100000),
+  currency: z.literal("USD"),
+  url: z
+    .string()
+    .url()
+    .refine((u) => u.startsWith("https://"), "Use an https link"),
+});
+export type Comparison = z.infer<typeof Comparison>;
+// Active asking prices Apify found while pricing a scan. `listings` holds only the
+// ones Claude judged comparable; `checked` is how many the search returned.
+export const MarketEvidence = z.object({
+  query: z.string().max(100),
+  checked: z.number().int().min(0).max(8),
+  listings: z.array(Comparison).max(8),
+  median: z.number().positive().max(100000).nullable(),
+});
+export type MarketEvidence = z.infer<typeof MarketEvidence>;
 // Claude's explanation of its estimate, for the seller only. assumedCondition
 // keeps Claude's original call after the seller corrects `condition`.
 export const PriceRationale = z.object({
   assumedCondition: Condition,
   conditionNote: z.string().max(200),
   factors: z.array(z.string().trim().min(1).max(140)).max(4),
+  market: MarketEvidence.optional(),
 });
 export type PriceRationale = z.infer<typeof PriceRationale>;
 export const DraftItem = z.object({
@@ -167,12 +187,6 @@ export const CheckoutRequest = z
     (v) => new Set(v.lines.map((l) => l.itemId)).size === v.lines.length,
     "Duplicate items in cart",
   );
-export type Comparison = {
-  title: string;
-  price: number;
-  url: string;
-  currency: "USD";
-};
 export type Integration = {
   name: string;
   feature: string;
@@ -185,3 +199,10 @@ export const money = (value: number) =>
     currency: "USD",
     maximumFractionDigits: value % 1 ? 2 : 0,
   }).format(value);
+// Mirrored in mobile/lib/api.ts, which cannot import runtime code from here.
+export const marketSummary = (m: MarketEvidence) =>
+  m.listings.length
+    ? `${m.listings.length} of ${m.checked} active eBay listings for “${m.query}” look like the same item${m.median ? ` (median asking price ${money(m.median)})` : ""}. Asking prices, not sales.`
+    : m.checked
+      ? `None of the ${m.checked} active eBay listings for “${m.query}” matched closely, so this is Claude’s estimate.`
+      : `No active eBay listings found for “${m.query}”, so this is Claude’s estimate.`;
