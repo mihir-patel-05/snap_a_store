@@ -137,3 +137,29 @@ describe("Untrusted provider inputs", () => {
     expect(result[0].variationId).toBe("VAR");
   });
 });
+describe("Cartesia narration", () => {
+  it("sends the voice as an id specifier and logs the provider's rejection", async () => {
+    vi.stubEnv("CARTESIA_API_KEY", "key");
+    vi.stubEnv("CARTESIA_VOICE_ID", "voice-123");
+    const fetchMock = vi.fn(
+      async () => new Response('{"error":"bad voice"}', { status: 400 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { speak } = await import("../lib/providers/cartesia");
+    await expect(speak("Hello", "en")).rejects.toThrow(
+      "Audio is temporarily unavailable",
+    );
+    const body = JSON.parse(
+      (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1]
+        .body as string,
+    );
+    expect(body.voice).toEqual({ mode: "id", id: "voice-123" });
+    expect(log).toHaveBeenCalledWith(
+      "Cartesia TTS failed",
+      400,
+      '{"error":"bad voice"}',
+    );
+    log.mockRestore();
+  });
+});
